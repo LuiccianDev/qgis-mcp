@@ -1,0 +1,132 @@
+"""The plugin ZIP is the only artifact QGIS installs: it must be self-contained.
+
+QGIS unzips the archive straight into the profile and imports `qgis_listener`,
+so every entry has to sit under that folder, the license and metadata have to
+travel with the code, and caches or development notes must not.
+"""
+
+import sys
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.build_plugin_zip import build
+
+
+def test_zip_root_is_the_plugin_folder(tmp_path):
+    archive = build(tmp_path)
+    with zipfile.ZipFile(archive) as zf:
+        names = zf.namelist()
+    assert names, "empty archive"
+    assert all(name.startswith("qgis_listener/") for name in names)
+
+
+def test_zip_contains_required_plugin_files(tmp_path):
+    archive = build(tmp_path)
+    with zipfile.ZipFile(archive) as zf:
+        names = set(zf.namelist())
+    assert "qgis_listener/metadata.txt" in names
+    assert "qgis_listener/LICENSE" in names
+    assert "qgis_listener/token_store.py" in names
+    assert "qgis_listener/plugin.py" in names
+
+
+def test_zip_excludes_caches_and_dev_docs(tmp_path):
+    archive = build(tmp_path)
+    with zipfile.ZipFile(archive) as zf:
+        names = zf.namelist()
+    assert not any("__pycache__" in n or n.endswith(".pyc") for n in names)
+    assert not any(n.endswith("AGENTS.md") for n in names)
+
+
+def test_zip_is_under_the_hub_limit(tmp_path):
+    archive = build(tmp_path)
+    assert archive.stat().st_size < 25 * 1024 * 1024
+
+
+def test_release_script_checks_and_bumps_versions_consistently(tmp_path):
+    from scripts import release
+
+    repo_root = Path(__file__).resolve().parents[1]
+    info = release.verify_repo_versions(repo_root)
+    assert info["pyproject_version"] == info["metadata_version"]
+
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "qgis_listener").mkdir(parents=True)
+    (fake_repo / "pyproject.toml").write_text(
+        '[project]\nname = "luiccian-qgis-mcp"\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (fake_repo / "qgis_listener" / "metadata.txt").write_text(
+        "[general]\nname=Luiccian QGIS Listener\nversion=0.1.0\nchangelog=0.1.0 : Initial\n",
+        encoding="utf-8",
+    )
+    (fake_repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [0.1.0] - 2026-04-17\n",
+        encoding="utf-8",
+    )
+
+    release.set_repo_version(fake_repo, "0.2.0")
+    updated = release.verify_repo_versions(fake_repo, expect_tag="v0.2.0")
+    assert updated["pyproject_version"] == "0.2.0"
+    assert updated["metadata_version"] == "0.2.0"
+
+
+def test_github_workflows_enforce_security_testing_and_release_tag_verification():
+    repo_root = Path(__file__).resolve().parents[1]
+    assert not (repo_root / ".flake8").exists()
+    assert not (repo_root / ".pre-commit-config.yaml").exists()
+
+    tests_wf = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "permissions:" in tests_wf and "contents: read" in tests_wf
+    assert "concurrency:" in tests_wf
+    assert "uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/" in tests_wf
+    assert (
+        "uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/"
+        in tests_wf
+    )
+    assert "scripts/release.py --check" in tests_wf
+    assert "--cov=src/qgis_mcp" in tests_wf
+    assert "flake8" not in tests_wf and "bandit" not in tests_wf
+    assert tests_wf.count("pytest tests/") == 1
+
+    assert "uv run --no-sync ruff check" in release_wf
+    assert "uv run --no-sync ruff format --check" in release_wf
+    assert "scripts/release.py --check --expect-tag" in release_wf
+    assert "pytest tests/" in release_wf
+    assert "SHA256SUMS.txt" in release_wf
+    assert "flake8" not in release_wf and "bandit" not in release_wf
+
+
+def test_repository_has_no_unused_config_files_or_stale_doc_references():
+    repo_root = Path(__file__).resolve().parents[1]
+    assert not (repo_root / ".mcp.json").exists()
+    assert not (repo_root / ".flake8").exists()
+    assert not (repo_root / ".pre-commit-config.yaml").exists()
+
+    gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
+    assert ".mcp.json" in gitignore
+
+    for doc_rel in ("README.md", "AGENTS.md", "CONTRIBUTING.md", "docs/agent-integration.md"):
+        content = (repo_root / doc_rel).read_text(encoding="utf-8")
+        assert "src/luiccian_qgis_mcp" not in content, doc_rel
+        assert ".flake8" not in content, doc_rel
+        assert "flake8" not in content, doc_rel
+
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    agent_doc = (repo_root / "docs" / "agent-integration.md").read_text(encoding="utf-8")
+    for required in (
+        "antigravity",
+        "mcp_config.json",
+        "claude-desktop",
+        "claude-code",
+        "scripts/build_plugin_zip.py",
+        "--plugin-only --from-zip",
+    ):
+        assert required in readme, required
+    for removed in ("opencode", "qgis-mcp-launch.bat", "kimi-code", "windsurf", "lmstudio"):
+        assert removed not in readme, removed
+        assert removed not in agent_doc, removed

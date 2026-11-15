@@ -1,0 +1,130 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a new dependency major surfaces here and not in an issue (#25)
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      code_changed: ${{ steps.filter.outputs.code_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}")
+          if echo "$CHANGED" | grep -qvE '(\.md$|^docs/|^\.github/(CODEOWNERS|PULL_REQUEST_TEMPLATE\.md)$)'; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: changes
+    if: ${{ needs.changes.outputs.code_changed == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: locked-ubuntu
+            os: ubuntu-latest
+            # Exactly what uv.lock pins - what contributors and the plugin see
+            fresh: false
+          - name: locked-windows
+            os: windows-latest
+            fresh: false
+          - name: unpinned-ubuntu
+            os: ubuntu-latest
+            # Fresh resolution, like `uvx --from <zip>`: every dependency at its
+            # newest release, so an SDK or dev-tool major fails here first
+            fresh: true
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install (locked)
+        if: ${{ !matrix.fresh }}
+        run: uv sync --frozen
+
+      - name: Install (newest of everything)
+        if: ${{ matrix.fresh }}
+        shell: bash
+        run: |
+          uv lock --upgrade
+          uv sync
+          uv pip list | grep -Ei '^(mcp|pydantic|anyio|pytest|pytest-asyncio) '
+
+      - name: Lint
+        if: ${{ matrix.name == 'locked-ubuntu' }}
+        shell: bash
+        # Ruff covers lint, formatting, complexity, and security (S) checks.
+        run: |
+          uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync python scripts/release.py --check
+
+      - name: Unit tests with coverage
+        shell: bash
+        run: |
+          uv run --no-sync pytest tests/ \
+            --ignore=tests/test_qgis_live.py \
+            --ignore=tests/test_stress.py \
+            --ignore=tests/test_tdd.py \
+            --cov=src/qgis_mcp \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
+
+      - name: Build & verify plugin ZIP
+        if: ${{ matrix.name == 'locked-ubuntu' }}
+        shell: bash
+        run: |
+          uv run --no-sync python scripts/build_plugin_zip.py
+          uv run --no-sync python -m zipfile -l dist/qgis_listener_v*.zip | grep -q "qgis_listener/metadata.txt"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        if: matrix.name == 'locked-ubuntu'
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        if: matrix.name == 'locked-ubuntu'
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false

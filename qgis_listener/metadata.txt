@@ -1,0 +1,30 @@
+[general]
+name=Luiccian QGIS Listener
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+description=Control QGIS from any AI agent through the Model Context Protocol
+about=Socket server plugin that exposes QGIS operations to MCP clients.
+    Install the luiccian-qgis-mcp server in your AI client to use it.
+    See https://github.com/LuiccianDev/qgis-mcp for instructions.
+
+    Features:
+    - MCP tools for layers, features, processing, rendering, layouts
+    - Diagnose tool for full stack health checks
+    - Plugin development tools: message log, plugin reload, layer tree
+    - Expression validation, project variables, settings access
+    - Non-blocking TCP socket server with length-prefixed framing
+    - Toolbar button with port configuration dropdown
+version=0.1.0
+author=LuiccianDev
+email=luicciandev@users.noreply.github.com
+tags=mcp,ai,claude,llm,automation,socket,remote
+homepage=https://github.com/LuiccianDev/qgis-mcp
+tracker=https://github.com/LuiccianDev/qgis-mcp/issues
+repository=https://github.com/LuiccianDev/qgis-mcp
+license=GPLv2+
+category=Plugins
+icon=icons/icon.png
+experimental=False
+deprecated=False
+changelog=0.1.0 : Personal branded release of the QGIS MCP bridge, with a shared
+    token file and a plugin UI to generate, copy, rotate and revoke it.

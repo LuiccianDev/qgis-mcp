@@ -1,0 +1,139 @@
+name: Release QGIS Plugin & PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & verify artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # The tag is the only source of the release version, so a forgotten bump
+      # would ship a plugin whose metadata.txt disagrees with its own tag.
+      - name: Verify tag matches project version and changelog
+        run: uv run --no-sync python scripts/release.py --check --expect-tag "${{ github.ref_name }}"
+
+      - name: Lint & security checks
+        run: |
+          uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync python scripts/release.py --check
+
+      - name: Run unit test suite
+        run: |
+          uv run --no-sync pytest tests/ \
+            --ignore=tests/test_qgis_live.py \
+            --ignore=tests/test_stress.py \
+            --ignore=tests/test_tdd.py \
+            -q
+
+      - name: Build plugin ZIP and Python package
+        # build_plugin_zip.py is stdlib-only and reads metadata.txt; uv build
+        # produces the wheel and sdist for luiccian-qgis-mcp.
+        run: |
+          uv run --no-sync python scripts/build_plugin_zip.py
+          uv build
+          uv run --no-sync python -m zipfile -l dist/qgis_listener_v*.zip | grep -q "qgis_listener/metadata.txt"
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum qgis_listener_v*.zip *.whl *.tar.gz > SHA256SUMS.txt
+
+      - name: Upload GitHub Release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: |
+            dist/qgis_listener_v*.zip
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          retention-days: 7
+
+      - name: Upload PyPI distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: pypi-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          retention-days: 7
+
+  github-release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist/
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/qgis_listener_v*.zip
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/qgis_listener_v*.zip
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+
+  publish-pypi:
+    name: Publish to PyPI (uv OIDC)
+    needs: build
+    if: ${{ vars.PYPI_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download PyPI distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: pypi-dist
+          path: dist/
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Publish package to PyPI
+        run: uv publish

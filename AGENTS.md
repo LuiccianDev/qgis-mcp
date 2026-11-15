@@ -1,0 +1,148 @@
+# AGENTS.md
+
+## Project Overview
+
+Luiccian QGIS MCP connects QGIS to any AI agent that speaks the Model Context Protocol (MCP), enabling the agent to directly control QGIS via socket-based communication. Includes a multi-client installer (`install.py`) for easy setup.
+
+## Repository Layout
+
+```text
+qgis_listener/               # the QGIS plugin (installed from a ZIP; the server never imports it)
+  server.py                  # socket server, framing, auth gate, dispatch (and nothing else)
+  handlers/                  # one mixin per command domain: system, project, session, layers,
+                             # features, style, canvas, processing, layout, connections, base
+  configurator.py            # MCP-client setup dialog + the token's Security group
+  token_store.py             # shared token file (byte-identical copy under src/)
+  wire.py errors.py registry.py constants.py compat.py
+src/qgis_mcp/       # the published package: MCP server, ServerContext, OOP toolsets, Pydantic schemas, socket client
+  tools/                     # BaseToolset + ServerContext (base.py) and domain Toolset classes
+  validation.py              # Pydantic BaseModel schemas & validate_params helper
+tests/                       # unit suite (no QGIS) + live/stress/tdd modules (need a running QGIS)
+scripts/build_plugin_zip.py  # builds dist/qgis_listener_v<version>.zip for a release
+docs/agent-integration.md    # MCP resources, prompts, protocol features, per-client setup
+install.py                   # multi-client installer: plugin link + MCP client config
+pyproject.toml               # wheel = src/ only; sdist = server + tests + docs
+```
+
+The plugin and the server are separate installs with separate version numbers (the plugin updates through QGIS, the server through the uvx cache), which is why each ships its own `token_store.py` and why version drift is normal rather than an error.
+
+## Architecture
+
+The system has two components that communicate over a TCP socket (default `localhost:9878`, configurable via env vars):
+
+1. **QGIS Plugin** (`qgis_listener/`) - Runs inside QGIS (3.28–4.x). `server.py`'s `QgisMCPServer` creates a non-blocking TCP socket server using a `QTimer` (25ms poll interval) to accept connections and process JSON commands within QGIS's event loop; it owns the socket, framing, the auth gate and dispatch, and nothing else. The commands themselves are mixins under `handlers/` (one module per domain: `system`, `project`, `session`, `layers`, `features`, `style`, `canvas`, `processing`, `layout`, `connections`, plus `base` for the shared layer lookups), combined onto `QgisMCPServer`. `plugin.py` holds only `QgisMCPPlugin` and `classFactory` (the QGIS entry point, toolbar and menu); `configurator.py` holds the MCP-client configuration dialog, including the Security group that generates, rotates and revokes the shared token. Supporting modules, all stdlib-only and `qgis`-free: `wire.py` (framing), `errors.py` (`CommandError` and friends), `registry.py` (the `@command` decorator), `constants.py` (defaults, settings prefix, `PLUGIN_DIR`), `token_store.py` (the shared token file the Configurator writes). `compat.py` provides enum compatibility between QGIS 3.x and 4.x (see below).
+
+   **Adding a command:** write the method on the mixin for its domain, decorate it with `@command` from `registry`, define any parameter constraints as a Pydantic `BaseModel` in `src/qgis_mcp/validation.py`, and add the matching `@mcp.tool` inside the corresponding `<Domain>Toolset(BaseToolset)` class in `src/qgis_mcp/tools/`. There is no dispatch table to update - `@command` registers the name and `_dispatch` resolves it. `tests/test_plugin_structure.py` enforces both directions of that parity, plus the rule that `handlers/` modules import package-root modules with `..` and never import each other.
+
+   **Adding a test module:** declare it in `PLUGIN_TESTS` or `PLUGIN_FREE_TESTS` in `tests/conftest.py`. The sdist ships `tests/` without `qgis_listener/`, so a module that needs the plugin is skipped when it is absent and the rest still run; `test_every_test_module_is_classified_as_plugin_dependent_or_not` fails on a module that picks no side. A module that imports plugin code at module level cannot be skipped after the fact (pytest aborts the collection), so it also goes in `COLLECT_IGNORE_WITHOUT_PLUGIN`.
+
+2. **MCP Server** (`src/qgis_mcp/server.py`, `src/qgis_mcp/tools/`, `src/qgis_mcp/validation.py`) - Runs outside QGIS as a standalone Python process. Uses `FastMCP` from the `mcp` library to expose QGIS operations as MCP tools, resources, and prompts. `ServerContext` and `BaseToolset` (`tools/base.py`) organize tools into cohesive domain classes (`LayerToolset`, `FeatureToolset`, `ProcessingToolset`, etc.) with shared access to `send()`, `_confirm_destructive()`, `_cache_as_resource()`, and `self.validate()`. Input parameters and invariants are validated through Pydantic `BaseModel` schemas (`validation.py`) via `validate_params()`, which raises `ToolError` on `ValidationError`. A `_send()` helper unwraps the response envelope and raises on errors. All 128 tools are `async` with `title=` for human-readable names. Uses `ToolAnnotations` for read-only/destructive/idempotent hints. Long-running tools use `ctx.info()` for MCP logging. Destructive tools call `_confirm_destructive`, which only elicits when asked to (see `QGIS_MCP_AUTO_CONFIRM` below). An optional compound tool mode (`src/qgis_mcp/compound_tools.py`) groups tools into 27 compound tools for reduced schema overhead. Its own `token_store.py` reads the same token file as the plugin (see the token bullet in Key Details).
+
+**Data flow:** Agent → MCP Server (FastMCP) → TCP socket → QGIS Plugin (QTimer loop) → PyQGIS API → response back through socket.
+
+There is also a standalone socket client at `src/qgis_mcp/client.py` (`QgisMCPClient` class) used for direct testing without MCP.
+
+## Coding Standards & Architectural Rules
+
+All changes across `src/qgis_mcp/` and `qgis_listener/` must follow these project rules:
+
+1. **Mandatory Pydantic Validation (`src/qgis_mcp/`)**:
+   - Define validated input schemas and domain constraints as `pydantic.BaseModel` classes using `Field` and `@field_validator` / `@model_validator` in `src/qgis_mcp/validation.py`.
+   - Validate structured/constrained tool arguments through `validate_params(ModelClass, ...)` or `self.validate(ModelClass, ...)` so invalid inputs fail cleanly with `ToolError` before sending commands to QGIS.
+2. **Object-Oriented Domain Toolsets (`src/qgis_mcp/`)**:
+   - Structure MCP tools as cohesive `<Domain>Toolset(BaseToolset)` classes in `src/qgis_mcp/tools/` connected to a shared `ServerContext` (`src/qgis_mcp/tools/base.py`), rather than loose procedural closures with wide parameter lists.
+   - Express clear class relationships via inheritance (`BaseToolset`), composition (`Toolset` holds `ServerContext`), and focused helper methods.
+3. **No Legacy PyQGIS or Qt APIs (`qgis_listener/`)**:
+   - Never use deprecated PyQGIS 3.x or PyQt5-only APIs when modern QGIS 3.28–4.x / `compat.py` equivalents exist:
+     - Resolve Qt5/Qt6 and QGIS 3.x/4.x enums exclusively through `qgis_listener/compat.py` (`MAP_LAYER_VECTOR`, `WKB_POINT`, `EDIT_BUFFER_GROUP`, `RENDER_UNIT_POINTS`, `LAYOUT_ITEM_MAP`, `MSG_INFO`, etc.); never hardcode unscoped Qt5 enum values or raw `QVariant.Type.*`.
+     - Never call `.exec_()` on Qt dialogs or event loops; always call `.exec()`.
+     - Never call `crs.toProj4()` directly; prefer `crs.toProj() if hasattr(crs, "toProj") else crs.toProj4()`.
+     - Never call deprecated `QgsLayoutItemLabel.setFontColor()`; use `QgsTextFormat` with `setColor()` and `item.setTextFormat()`.
+     - Never duplicate `QgsCoordinateReferenceSystem(crs)` + `.isValid()` boilerplate across handlers; always call `self._parse_crs(crs)` (and `self._layer()`, `self._get_vector_layer()`, `self._get_raster_layer()`) from `HandlerBase`.
+     - Always dispose of temporary `QgsPrintLayout` objects with `layout.deleteLater()` inside a `finally:` block.
+4. **Clean, Simplified, Well-Organized Code**:
+   - Keep functions small, single-purpose, DRY, and within ruff complexity limits (`C901 <= 15`).
+   - Extract shared helpers for repeated logic, use comprehensions/early returns where clearer, and keep `qgis_listener/` strictly Python 3.9-compatible (`tests/test_py39_compat.py`).
+5. **License & Process Boundary (`Apache-2.0` vs `GPL-2.0-or-later`)**:
+   - `src/qgis_mcp/` is **Apache-2.0** (`LICENSE`, `pyproject.toml`) and MUST NEVER import `qgis`, `PyQt5`, `PyQt6`, `sip`, or `qgis_listener` (enforced by `tests/test_packaging.py::test_server_package_has_no_qgis_or_plugin_imports`).
+   - `qgis_listener/` is **GPL-2.0-or-later** (`qgis_listener/LICENSE`, `qgis_listener/metadata.txt`) because it runs inside QGIS and uses PyQGIS; keep `qgis_listener/LICENSE` bundled in the plugin ZIP (`scripts/build_plugin_zip.py`).
+
+## Commands
+
+Toolchain: `uv` for dependencies and runs, Python 3.12 for the test suite (`.python-version`). The plugin itself must stay Python 3.9-compatible, because QGIS ships 3.9.
+
+```bash
+# Run the MCP server (this is what an MCP client launches)
+uv run --no-sync src/qgis_mcp/server.py
+
+# Run the multi-client installer (dev symlink + MCP client config; add --from-zip or --remote for ZIP install)
+python install.py
+
+# Unit suite - no QGIS needed; live modules skip when nothing listens on 9878
+# Expected: 553 passed, 5 skipped
+uv run --no-sync pytest tests/ --ignore=tests/test_qgis_live.py --ignore=tests/test_stress.py --ignore=tests/test_tdd.py -q
+
+# Live suite - needs the plugin's server running on localhost:9878
+# Expected: 68 passed, 1 skipped (the token-auth test skips without QGIS_MCP_TOKEN)
+uv run --no-sync pytest tests/test_qgis_live.py -q
+
+# Everything (live modules skip when nothing is listening)
+uv run --no-sync pytest tests/ -q
+
+# Lint - CI runs both (with security rules unified in pyproject.toml)
+uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/
+uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/
+
+# Build the artifacts
+uv build                                              # dist/*.whl + dist/*.tar.gz
+uv run --no-sync python scripts/build_plugin_zip.py   # dist/qgis_listener_v<version>.zip
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `QGIS_MCP_HOST` | `localhost` | Host for QGIS plugin socket connection |
+| `QGIS_MCP_PORT` | `9878` | Port for QGIS plugin socket connection. The plugin reads it too (`constants.env_port()`): set where QGIS is launched, it overrides the port saved in QgsSettings for that window without writing over it, since QgsSettings is per profile and shared by every window on it (#54). |
+| `QGIS_MCP_INSTANCES` | _(unset)_ | Comma-separated `name=port` / `name=host:port` list of QGIS instances addressable from one server (e.g. `default=9878,b=9879`). Unset = a single instance named `default` from `QGIS_MCP_HOST`/`QGIS_MCP_PORT`. Names match `[A-Za-z0-9_-]+`. |
+| `QGIS_MCP_TOKEN` | _(unset)_ | Optional shared secret. When set, it wins over the token file; the plugin then requires a matching `token` on every command (constant-time compare, and a client is disconnected after `MAX_AUTH_FAILURES` consecutive rejections); the client attaches it automatically. Unset = the token file, or no auth when there is none (default). Required when the plugin binds a non-loopback address - a token from either source satisfies it. |
+| `QGIS_MCP_TRANSPORT` | `stdio` | MCP transport: `stdio` or `streamable-http` |
+| `QGIS_MCP_LOG_FILE` | `~/.local/share/qgis-mcp/server.log` | Log file path (empty to disable file logging) |
+| `QGIS_MCP_LOG_LEVEL` | `INFO` | File log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `QGIS_MCP_TOOL_MODE` | `granular` | Tool registration mode: `granular` (128 tools) or `compound` (27 grouped tools) |
+| `QGIS_MCP_AUTO_CONFIRM` | on | `0`/`false`/`no`/`off` makes `_confirm_destructive` elicit; anything else (including unset) skips it. Default-skip because MCP clients gate destructive tool calls themselves - see the confirmation note in Key Details. |
+
+## MCP Tools, Resources, Prompts, Protocol Features
+
+See `README.md` for the full tool table (128 tools) and `docs/agent-integration.md` for the MCP resources, prompts and protocol features (logging, elicitation, completions, annotations, compound mode).
+
+## Key Details
+
+- **Main dependency**: `mcp[cli]>=1.20.0,<3` (v1.26.0 locked). mcp 2.0 renamed `mcp.server.fastmcp` → `mcp.server.mcpserver` (`FastMCP` → `MCPServer`), so `server.py` and `compound_tools.py` import it through a try/except shim and the rest of the code keeps the `FastMCP` name. `Tool.inputSchema` became `Tool.input_schema`, and `mcp.shared.memory.create_connected_server_and_client_session` is gone - `tests/mcp_compat.py` papers over both for tests. CI runs the unit suite against both the locked mcp and the newest release (issue #25).
+- **Socket protocol**: Length-prefixed framing over TCP. Each message: 4-byte big-endian uint32 length header + JSON payload bytes. Client sends `{"type": "<command>", "params": {...}}`, server responds `{"status": "success"|"error", "result": ...}`. Plugin-side framing helpers live in `qgis_listener/wire.py` (stdlib-only, no `qgis` imports, must stay Python 3.9-compatible): responses queue through an `OutboundBuffer` drained across timer ticks because the client sockets are non-blocking and `sendall` would truncate large frames. `tests/test_py39_compat.py` is an AST guard against 3.10-only constructs in the plugin (PEP 604 unions in `isinstance`, `zip(strict=)` - use the tuple form and `wire.zip_strict()`).
+- **Connection management**: MCP server validates connection via `getpeername()`. Host/port configurable via `QGIS_MCP_HOST`/`QGIS_MCP_PORT` env vars. QGIS plugin supports up to 10 concurrent clients (e.g. multiple Claude Code instances each spawning their own MCP server process).
+- **Token store**: the plugin and the MCP server each ship `token_store.py` (stdlib-only, Python 3.9-compatible) because they are installed by different mechanisms and cannot import each other; `tests/test_token_parity.py` pins the shared constants and public names. Resolution is `QGIS_MCP_TOKEN` first, then the per-user file (`%APPDATA%\qgis-mcp\token` on Windows, `$XDG_CONFIG_HOME/qgis-mcp/token` or `~/.config/qgis-mcp/token` elsewhere), then no auth. The file is read on every command, so rotating or revoking it in the Configurator's Security group takes effect on the next call without restarting either half; the Configurator is the only writer. A config root that cannot be resolved (`Path.home()` raises under a stripped environment) reads as "no token file" instead of raising on the command path.
+- **Multi-instance**: `QGIS_MCP_INSTANCES` lets one server address several running QGIS windows. `get_instances()` resolves the config from the environment on every call; connections, TTL validation timestamps, first-connect retry state and locks are all keyed by instance name (`_qgis_connections`, `_connection_validated_at`, `_first_connected`, `_qgis_locks`), so two instances never serialize against each other. `_send_sync()`/`_send()` take a trailing `instance` argument and every `@mcp.tool` function forwards its own `instance: str | None = None` parameter (`test_every_tool_forwards_instance` enforces this for all of them). Unset env = one instance named `default`, identical to the previous behaviour. Instance-less calls resolve via `implicit_instance()`: the entry named `default` when present, otherwise the first entry in insertion order. Compound tool mode (`QGIS_MCP_TOOL_MODE=compound`) exposes no instance selection, so configuring more than one instance in that mode refuses to start (`SystemExit`) rather than routing every call to one QGIS.
+- **All tools async**: Every tool function is `async def` to enable `await ctx.info()`, `ctx.elicit()`, etc. The `_send_sync()` helper stays synchronous (blocking socket call - acceptable since responses are fast).
+- **Feature format**: Flat dicts with `_fid` (feature ID) and attributes at top level. Geometry in `_geometry` key when requested.
+- **Edit sessions**: `start_editing`/`commit_edits`/`rollback_edits`/`undo_edits`/`redo_edits` drive `QgsVectorLayer`'s edit buffer and undo stack. `add_features`, `update_features`, `delete_features` and `update_feature_geometry` check `layer.isEditable()` and use the layer-level API when a session is open (writes land in the buffer, undoable, discarded by rollback) and `dataProvider()` otherwise; every one of them reports which path it took via `buffered` in the response. Writing to the provider under an open session would land beneath the buffer and be lost.
+- **Database connections**: `list_connections`/`create_postgresql_connection`/`list_connection_tables`/`add_layer_from_connection`/`import_layer_to_connection`/`execute_connection_sql` wrap `QgsProviderRegistry.providerMetadata(...).connections()` and `QgsAbstractDatabaseProviderConnection` - the Browser panel's saved connections (PostgreSQL, GeoPackage, SpatiaLite, MS SQL, ...). `create_postgresql_connection` never accepts a password: `connection_mode` (`_POSTGRESQL_MODES`, one of `endpoint_using_auth_manager`, `service_using_auth_manager`, `service_only`) says whether credentials come from a QGIS Authentication Manager configuration ID, the libpq service file (pg_service.conf), or both, and lists the parameters that mode requires; anything else passed is rejected, the endpoint mode requires the caller to provide the real database port instead of assuming `5432`, the endpoint is validated before persistence, and duplicate names are rejected (#37). Connection URIs are password-redacted (`_redact_uri`) before leaving the plugin. Import builds an OGR uri (container file + `layerName` option) for `ogr` connections and a `QgsDataSourceUri` for database providers, then calls `QgsVectorLayerExporter.exportLayer`.
+- **`get_layer_features` limit**: MCP tool refuses a limit above 50 (default 10) rather than clamping it; page with `offset`. Supports `expression` for server-side filtering.
+- **Destructive-tool confirmation**: `_confirm_destructive` (9 call sites, `execute_code` among them) returns True without eliciting unless `QGIS_MCP_AUTO_CONFIRM` is `0`/`false`/`no`/`off`. It was never a safety boundary - it already failed open when the client lacked elicitation support (#27) - and MCP puts human-in-the-loop on the client, which the `destructiveHint` annotation feeds. Two prompts per call trained click-through, weakening the client's own gate. Keep the `destructiveHint` annotations: they are what the client's gate reads. When `ctx.elicit()` fails with `NoBackChannelError` (mcp>=2.0: the connection has no channel for server-initiated requests, whatever the client supports - protocol 2026-07-28 per-request dispatch as negotiated by `Client(mode="auto")`, stateless or JSON-response streamable HTTP) rather than a plain "not supported" `McpError`, `_confirm_destructive` fails closed (raises `ToolError`) instead of proceeding: the client's capability is unknown, we just couldn't ask, so every destructive tool refuses on such a connection until `QGIS_MCP_AUTO_CONFIRM` is unset (#41). Errors meant for the user are raised as `ToolError` (`_send_sync`, `_send`, `_confirm_destructive`): mcp>=2.1 masks any other exception to `Error executing tool <name>`.
+- **Batch support**: `batch` command type executes multiple commands in sequence, returns array of results. `BATCH_BLOCKED_COMMANDS` (elicit-always destructive commands, plus `batch` itself so batches cannot nest) is enforced on both sides: in the MCP server and in the plugin (`wire.BATCH_BLOCKED_COMMANDS`, pinned equal to `qgis_mcp.protocol`'s copy by a test), so a direct socket client cannot bypass confirmation by wrapping them in a batch.
+- **Configurable timeouts**: `execute_processing`, `execute_processing_batch`, `render_map`, `execute_code` use a 60s socket timeout; others default to 30s. `execute_processing`, `execute_processing_batch` and `execute_code` also take an optional `timeout` (the deadline enforced in the plugin, default 55s; the socket timeout is kept 5s above it so the plugin fails first with a real message instead of the client abandoning a request QGIS is still working on). Processing uses a `QgsProcessingFeedback` that pumps the Qt event loop and cancels past the deadline. For `execute_code` the deadline is a `sys.settrace` function checked on every call and on the script's own lines (`_deadline_tracer`), which stops runaway Python but cannot interrupt one blocking call; a timed out script returns `timed_out: True` with the output printed so far, and every result carries `elapsed` (#43). The plugin reports a script that raised or timed out as a successful command with `executed: False`; the MCP tools (granular and compound) turn that into a `ToolError` via `helpers.code_failure_message`, carrying the traceback and partial output, so the client sees `isError`. `execute_processing_batch`'s budget covers the whole batch: runs that would start after it come back `skipped` next to the completed ones.
+- **Background processing jobs**: `start_processing_job` runs an algorithm as a `QgsProcessingAlgRunnerTask` in `QgsApplication.taskManager()` (the Processing toolbox's own mechanism) and returns a job id at once; there is no deadline, and QGIS and the socket stay responsive. `get_processing_job` polls (progress from the feedback), `cancel_processing_job` calls `task.cancel()`. State changes only in `_finish_job`, the task's `executed` slot on the main thread: it runs the same output verification as `_run_alg` (`_output_failure`, missing/stale files) and, with `load_results`, moves `context.layersToLoadOnCompletion()` into the project. Never touch `job["task"]` after it finished, because QGIS deletes it. The job dict holds the context and feedback, since the task only references them. Refused up front: algorithms flagged `NoThreading` (`PROC_ALG_NO_THREADING`), and a `TEMPORARY_OUTPUT`/`memory:` feature sink without `load_results`, a memory layer that would be discarded when the job ends. Temporary file destinations are allowed. The last 50 finished jobs are kept.
+- **Session journal and export**: `_dispatch` journals every successful command not in `wire.UNRECORDED_COMMANDS` (read-only commands, pinned to the MCP tools' `readOnlyHint` by `test_the_journal_leaves_out_exactly_the_read_only_commands`, plus bookkeeping), with its params deep-copied *before* the call and the `(id, name)` of each layer it added. An `execute_code` result with `executed: False` is not journaled. A finished job journals itself as a blocking `execute_processing`. `export_session` renders the journal (last 1000 commands) as a script that calls `plugins["qgis_listener"].server._dispatch` from the QGIS Python console and remaps recorded layer ids onto the new ones by name. One journal per QGIS, shared by every client.
+- **Checkpoints**: `create_checkpoint` writes the project to a temp `.qgz` (then puts the user's `fileName()`/`isDirty()` back, since `write(path)` adopts the path) and keeps a `materialize()`d copy of every memory layer, whose features a project file does not hold. `restore_checkpoint` reads it back, refills the memory layers (with new fids: the memory provider assigns its own), keeps the current file name, marks the project dirty, and rewinds the journal to the checkpoint's `seq`. File/database data and uncommitted edits are not snapshotted; `create_checkpoint` lists layers with uncommitted edits. There are 20 at most, deleted when the server stops. `restore_checkpoint` and `load_project` read through `HandlerBase._read_project`, which dismisses QGIS's modal "Handle Unavailable Layers" dialog (`QgsHandleBadLayers`, matched by class name) as it opens. Otherwise `read()` blocks until someone closes it, and the client times out first. Dismissing it keeps those layers as unavailable, and both commands list them in `unavailable_layers`.
+- **render_map**: Returns inline `ImageContent` (base64 PNG) so the agent can see the map directly. Optional `path` param also saves to disk.
+- **get_canvas_screenshot**: Fast canvas widget grab via `QWidget.grab()` - no re-render, returns inline `ImageContent`.
+- **transform_coordinates**: Uses `QgsCoordinateTransform` for point(s) and bbox CRS conversion.
+- **Token optimizations**: Tools return dicts (no double JSON serialization). Plugin strips redundant metadata from responses. Features use flat format.
+- **Timeouts are never retried**: `client.send_command` raises `CommandTimeout` (a `ConnectionError` subclass, `protocol.py`) after closing the socket, because the abandoned response would otherwise sit in the recv buffer for the next command's framed read to take as its own, desyncing every later call (issue #39). `_send_sync` retries ordinary connection errors but re-raises `CommandTimeout` on the first attempt: QGIS still has that command, so retrying adds the layer or writes the file a second time. A slow *connect* leaves nothing running in QGIS, arrives as a plain `ConnectionError`, and keeps the patient schedule.
+- **Version drift between the two halves**: they update by different mechanisms (QGIS Plugin Manager for the plugin, the uvx cache for the MCP server, which pins whatever it cached for the branch archive URL), so drift is the default rather than an accident. The client attaches `client_version` to every envelope (`protocol.get_client_version()`, from the installed dist metadata); the plugin records it after the auth gate (`_record_client_version`, bounded by `MAX_VERSION_LENGTH` and `MAX_TRACKED_VERSIONS` since it reaches the user), reports it in `diagnose`'s `client_versions` check, shows it in the configurator, and logs one line per newly seen version to the `Luiccian QGIS MCP` tab of the Log Messages panel (WARNING with the fix command when it differs from the plugin, INFO when it matches). Nothing goes to the message bar over the canvas: drift is advisory and the user did not do anything to trigger it. `enrich_diagnose` adds `fix` (the command for the detected install type) and `note` to a `version_match` mismatch. Mismatches are advisory, not fatal - only tools added since the older half was built are missing, and a parameter the older plugin does not know is refused by `_dispatch` with the accepted names listed rather than silently defaulted - so nothing in the UI is styled as a failure.
+
+## Release, Linting, and Plugin Installation
+
+Artifacts: `uv build` writes the wheel (the server package only) and the sdist (server + tests + docs, deliberately no `qgis_listener/`); `scripts/build_plugin_zip.py` writes `dist/qgis_listener_v<version>.zip`, taking the version from `qgis_listener/metadata.txt` so a hand-built ZIP matches the one CI attaches. `.github/workflows/release.yml` validates the codebase (`ruff check`, `ruff format --check`, `scripts/release.py --check --expect-tag`, and `pytest`) and attaches `qgis_listener_v<version>.zip`, the wheel, and the sdist to the GitHub Release. The plugin is distributed as that ZIP only (installed with QGIS's **Install from ZIP** or `install.py --from-zip`/`--remote`), never through the Plugin Repository.
+
+See `CONTRIBUTING.md` for version-sync steps (`pyproject.toml`/`qgis_listener/metadata.txt`/`uv.lock` + `CHANGELOG.md` verified via `scripts/release.py --check`), the `dev` → `main` fast-forward requirement before tagging, the unified `ruff` linting/formatting gate in `pyproject.toml`, and plugin installation.

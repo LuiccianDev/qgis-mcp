@@ -1,0 +1,37 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.DS_Store
+
+# Virtual environments
+.venv
+data/
+logs/
+
+# Editor / installer leftovers
+.vscode/
+*.bak*
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Linting
+.ruff_cache/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Local agent workspaces
+.mcp.json
+.junie/
+.superpowers/
+docs/superpowers/

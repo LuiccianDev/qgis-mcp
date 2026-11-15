@@ -1,0 +1,110 @@
+name: Bump Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "SemVer part to bump when version is not specified"
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: "Optional explicit SemVer (e.g. 0.4.0); overrides bump"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: "Verify version bump and tests without opening a PR"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Prepare release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Compute target version
+        id: version
+        shell: bash
+        env:
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          TARGET=$(uv run --no-sync python -c '
+          import os, tomllib
+          explicit = os.environ["INPUT_VERSION"].strip().lstrip("v")
+          if explicit:
+              print(explicit)
+          else:
+              with open("pyproject.toml", "rb") as f:
+                  cur = tomllib.load(f)["project"]["version"]
+              major, minor, patch = (int(x) for x in cur.split("."))
+              bump = os.environ["INPUT_BUMP"]
+              if bump == "major":
+                  print(f"{major + 1}.0.0")
+              elif bump == "minor":
+                  print(f"{major}.{minor + 1}.0")
+              else:
+                  print(f"{major}.{minor}.{patch + 1}")
+          ')
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version files & verify
+        shell: bash
+        run: |
+          uv run --no-sync python scripts/release.py --set-version "${{ steps.version.outputs.target }}"
+          uv lock
+          uv run --no-sync python scripts/release.py --check
+          uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/
+          uv run --no-sync pytest tests/ \
+            --ignore=tests/test_qgis_live.py \
+            --ignore=tests/test_stress.py \
+            --ignore=tests/test_tdd.py \
+            -q
+
+      - name: Create release PR
+        if: ${{ !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          commit-message: "chore(release): v${{ steps.version.outputs.target }}"
+          branch: "release/v${{ steps.version.outputs.target }}"
+          delete-branch: true
+          title: "chore(release): v${{ steps.version.outputs.target }}"
+          body: |
+            Automated version bump to `v${{ steps.version.outputs.target }}`.
+
+            - Updated `pyproject.toml`, `qgis_listener/metadata.txt`, and `CHANGELOG.md` via `scripts/release.py`.
+            - Verified `ruff check`, `ruff format --check`, and unit tests.
+
+            After merging this PR, create and push the release tag:
+            ```bash
+            git tag -a v${{ steps.version.outputs.target }} -m "Release v${{ steps.version.outputs.target }}"
+            git push origin v${{ steps.version.outputs.target }}
+            ```

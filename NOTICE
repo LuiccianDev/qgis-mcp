@@ -1,0 +1,12 @@
+Luiccian QGIS MCP
+Copyright (C) 2026 LuiccianDev (https://github.com/LuiccianDev/luiccian-qgis-mcp)
+
+Dual-licensed repository:
+- MCP Server (`src/luiccian_qgis_mcp/` and root distribution): licensed under the
+  Apache License, Version 2.0 (`Apache-2.0`). See `LICENSE` for the full text.
+- QGIS Plugin (`qgis_listener/`): licensed under the GNU General Public License
+  v2.0 or later (`GPL-2.0-or-later`) for in-process integration with QGIS and
+  PyQGIS. See `qgis_listener/LICENSE` for the full text.
+
+QGIS and PyQGIS are trademarks/projects of the QGIS Development Team. This
+project is independent and is not affiliated with or endorsed by QGIS.org.

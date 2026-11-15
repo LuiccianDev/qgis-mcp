@@ -1,0 +1,11 @@
+# Default owner for everything in the repository
+* @LuiccianDev
+
+# CI/CD workflows and repository governance
+/.github/ @LuiccianDev
+
+# QGIS plugin (GPL-2.0-or-later, Python 3.9 compatible)
+/qgis_listener/ @LuiccianDev
+
+# MCP server package (Apache-2.0, no qgis/Qt imports)
+/src/qgis_mcp/ @LuiccianDev

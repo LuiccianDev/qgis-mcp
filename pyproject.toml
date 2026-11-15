@@ -1,0 +1,133 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qgis_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/qgis_mcp",
+    "skills",
+    "tests",
+    "README.md",
+    "README_PYPI.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "pyproject.toml",
+]
+# The QGIS plugin is a separate GPL-2.0-or-later artifact
+# (scripts/build_plugin_zip.py) and stays excluded from the Apache-2.0 sdist.
+exclude = ["qgis_listener"]
+
+[tool.uv]
+package = true
+
+[project]
+name = "luiccian-qgis-mcp"
+version = "0.1.0"
+description = "QGIS MCP - control QGIS through the Model Context Protocol"
+readme = "README_PYPI.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "LuiccianDev" }]
+keywords = ["qgis", "mcp", "model-context-protocol", "gis", "geospatial"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp[cli]>=1.20.0,<3",
+    "pydantic>=2.11,<3",
+]
+
+[project.scripts]
+luiccian-qgis-mcp = "qgis_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/LuiccianDev/qgis-mcp"
+Repository = "https://github.com/LuiccianDev/qgis-mcp"
+Issues = "https://github.com/LuiccianDev/qgis-mcp/issues"
+Changelog = "https://github.com/LuiccianDev/qgis-mcp/blob/master/CHANGELOG.md"
+
+[dependency-groups]
+# ruff pinned so local linting and .github/workflows/tests.yml always agree.
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "anyio>=4,<5",
+    "ruff==0.17.4",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "qgis_listener", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "C90", "PIE", "C4", "S"]
+ignore = [
+    "E501",    # line too long - handled by formatter
+    "RUF001",  # ambiguous unicode in strings - en dashes are intentional prose
+    "RUF002",  # ambiguous unicode in docstrings - en dashes are intentional prose
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+# The plugin runs inside QGIS's bundled interpreter, which is still Python 3.9
+# on releases well past the 3.28 minimum (QGIS 3.42 ships 3.9). Both rules below
+# push code toward 3.10-only constructs that raise TypeError at runtime there -
+# and the suite runs on 3.12, so CI never catches it. Use the tuple form of
+# isinstance and wire.zip_strict() instead.
+"qgis_listener/*" = [
+    "UP038",  # `X | Y` in isinstance needs 3.10+
+    "B905",   # `zip(strict=)` needs 3.10+
+]
+"install.py" = [
+    "S310",   # urllib opens hardcoded HTTPS GitHub API / release URLs
+    "S603",   # subprocess runs explicit [python/uv/cli, ...] argument lists
+]
+"scripts/*" = [
+    "S603",   # release script runs explicit [git/uv/...] argument lists
+    "S607",   # resolves git/uv from PATH in developer release workflow
+]
+"tests/*" = [
+    "S101",   # pytest relies on assert statements
+    "S102",   # tests execute generated session export scripts in-memory
+    "S104",   # server tests exercise non-loopback bind guards explicitly
+    "S105",   # tests assert literal dummy tokens and constant names
+    "S108",   # tests pass mock /tmp/... paths to QGIS mocks and path sanitizers
+    "S603",   # packaging tests invoke python/uv subprocesses
+    "S608",   # live SQL tests test query parameterization and injection resistance
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/qgis_mcp"]
+omit = [
+    "tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "^\\s*\\.\\.\\.\\s*$",
+    "raise NotImplementedError",
+]
