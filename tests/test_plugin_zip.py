@@ -130,3 +130,82 @@ def test_repository_has_no_unused_config_files_or_stale_doc_references():
     for removed in ("opencode", "qgis-mcp-launch.bat", "kimi-code", "windsurf", "lmstudio"):
         assert removed not in readme, removed
         assert removed not in agent_doc, removed
+
+
+def test_extract_changelog_section_returns_version_body_and_fallback(tmp_path):
+    from scripts import release
+
+    fake_repo = tmp_path / "repo"
+    fake_repo.mkdir()
+    (fake_repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [0.1.1] - 2026-11-15\n\n"
+        "### Fixed\n- Fix A\n\n"
+        "## [0.1.0] - 2026-11-10\n\nInitial.\n",
+        encoding="utf-8",
+    )
+
+    body = release.extract_changelog_section(fake_repo, "v0.1.1")
+    assert "### Fixed" in body
+    assert "- Fix A" in body
+    assert "## [0.1.0]" not in body
+
+    missing = release.extract_changelog_section(fake_repo, "v9.9.9")
+    assert "9.9.9" in missing
+
+
+def test_bump_release_and_tests_support_workflow_call_without_pat():
+    repo_root = Path(__file__).resolve().parents[1]
+    tests_wf = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    bump_wf = (repo_root / ".github" / "workflows" / "bump-release.yml").read_text(encoding="utf-8")
+
+    assert "workflow_call:" in tests_wf
+    assert "uses: ./.github/workflows/tests.yml" in bump_wf
+    assert "gh pr create" in bump_wf
+    assert "--extract-notes" in bump_wf
+
+
+def test_release_workflow_has_verify_build_gh_release_and_pypi_stages():
+    repo_root = Path(__file__).resolve().parents[1]
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "v[0-9]+.[0-9]+.[0-9]+" in release_wf
+    assert "workflow_dispatch:" in release_wf
+    assert "verify-tag:" in release_wf
+    assert "uv lock --check" in release_wf
+    assert "pypa/gh-action-pypi-publish@" in release_wf
+    assert "needs: [verify-tag, github-release]" in release_wf
+
+
+def test_manual_publish_pypi_recovery_workflow_exists_and_supports_testpypi():
+    repo_root = Path(__file__).resolve().parents[1]
+    wf_path = repo_root / ".github" / "workflows" / "publish-pypi.yml"
+    assert wf_path.is_file()
+    content = wf_path.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in content
+    assert "testpypi" in content
+    assert "https://test.pypi.org/legacy/" in content
+    assert "scripts/release.py --check --expect-tag" in content
+    assert "pypa/gh-action-pypi-publish@" in content
+
+
+def test_workflows_use_no_project_and_idempotent_release():
+    repo_root = Path(__file__).resolve().parents[1]
+    tests_wf = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish_wf = (repo_root / ".github" / "workflows" / "publish-pypi.yml").read_text(
+        encoding="utf-8"
+    )
+    gov_doc = (repo_root / "docs" / "github-governance.md").read_text(encoding="utf-8")
+
+    # Finding #1 & #4: stdlib-only scripts/release.py runs without pre-existing .venv via --no-project
+    assert "uv run --no-project python scripts/release.py --check --expect-tag" in release_wf
+    assert "uv run --no-project python scripts/release.py --extract-notes" in release_wf
+    assert "uv run --no-project python scripts/release.py --check --expect-tag" in publish_wf
+    # Finding #2 & #3: no conflicting --generate-notes and idempotent gh release upload
+    assert "--generate-notes" not in release_wf
+    assert "gh release upload" in release_wf
+    # Finding #5: tests.yml isolates concurrency per target ref
+    assert "inputs.ref || github.ref" in tests_wf
+    # Finding #6: governance doc mentions Trusted Publisher for publish-pypi.yml
+    assert "publish-pypi.yml" in gov_doc

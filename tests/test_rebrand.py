@@ -53,11 +53,14 @@ def test_plugin_defaults():
 
 
 def test_metadata_identity():
+    import tomllib
+
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     cfg = configparser.ConfigParser()
     cfg.read(REPO / "qgis_listener" / "metadata.txt", encoding="utf-8")
     general = cfg["general"]
     assert general["name"] == "Luiccian QGIS Listener"
-    assert general["version"] == "0.1.0"
+    assert general["version"] == str(pyproject["project"]["version"])
     assert general["license"] == "GPLv2+"
     assert "supportsqt6" not in general
     assert "nkarasiak" not in general["homepage"]

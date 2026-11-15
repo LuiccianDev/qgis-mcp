@@ -125,6 +125,23 @@ def set_repo_version(repo_root: Path, new_version: str) -> dict[str, str]:
     return verify_repo_versions(repo_root)
 
 
+def extract_changelog_section(repo_root: Path, version_or_tag: str) -> str:
+    """Extract the CHANGELOG.md body for a version/tag, or return a fallback summary."""
+    version = normalize_version(version_or_tag)
+    changelog_path = repo_root / "CHANGELOG.md"
+    if not changelog_path.is_file():
+        return f"Release v{version}"
+    text = changelog_path.read_text(encoding="utf-8")
+    pattern = re.compile(rf"^## \[{re.escape(version)}\][^\r\n]*\r?\n", flags=re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return f"Release v{version}"
+    rest = text[match.end() :]
+    next_heading = re.search(r"^## \[", rest, flags=re.MULTILINE)
+    body = (rest[: next_heading.start()] if next_heading else rest).strip()
+    return body or f"Release v{version}"
+
+
 def _create_git_tag(repo_root: Path, tag: str, dry_run: bool = False) -> None:
     cmd = ["git", "tag", "-a", tag, "-m", f"Release {tag}"]
     if dry_run:
@@ -152,16 +169,40 @@ def _build_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--set-version", help="Bump version across pyproject/metadata/CHANGELOG")
     parser.add_argument("--build", action="store_true", help="Build the plugin ZIP into dist/")
     parser.add_argument("--tag", action="store_true", help="Create annotated git tag v<version>")
+    parser.add_argument(
+        "--extract-notes",
+        metavar="TAG_OR_VERSION",
+        help="Extract CHANGELOG.md notes for the given version or tag",
+    )
+    parser.add_argument(
+        "--output",
+        help="Optional output file path for --extract-notes",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print git tag without creating it")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_args(argv)
-    if not (args.check or args.set_version or args.build or args.tag or args.expect_tag):
+    if not (
+        args.check
+        or args.set_version
+        or args.build
+        or args.tag
+        or args.expect_tag
+        or args.extract_notes
+    ):
         args.check = True
 
     try:
+        if args.extract_notes:
+            notes = extract_changelog_section(REPO_ROOT, args.extract_notes)
+            if args.output:
+                Path(args.output).write_text(f"{notes}\n", encoding="utf-8")
+            else:
+                print(notes)
+            return 0
+
         if args.set_version:
             info = set_repo_version(REPO_ROOT, args.set_version)
             print(f"Updated repository version to {info['version']} (tag {info['tag']})")

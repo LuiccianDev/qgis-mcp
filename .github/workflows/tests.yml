@@ -5,6 +5,13 @@ on:
     branches: [main, master, dev]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Optional git ref to check out when called from another workflow"
+        required: false
+        type: string
+        default: ""
   schedule:
     # Weekly, so a new dependency major surfaces here and not in an issue (#25)
     - cron: "0 6 * * 1"
@@ -13,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
           fetch-depth: 0
       - id: filter
@@ -67,6 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@v7
