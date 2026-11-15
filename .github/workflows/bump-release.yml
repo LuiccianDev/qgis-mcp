@@ -103,7 +103,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BRANCH_NAME="${{ steps.version.outputs.branch }}"
-          git checkout -b "$BRANCH_NAME"
+          git checkout -B "$BRANCH_NAME"
           git add pyproject.toml qgis_listener/metadata.txt CHANGELOG.md uv.lock
           git commit -m "chore(release): v${{ steps.version.outputs.target }}"
           git push origin "$BRANCH_NAME" --force

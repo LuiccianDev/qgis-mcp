@@ -209,3 +209,19 @@ def test_workflows_use_no_project_and_idempotent_release():
     assert "inputs.ref || github.ref" in tests_wf
     # Finding #6: governance doc mentions Trusted Publisher for publish-pypi.yml
     assert "publish-pypi.yml" in gov_doc
+
+
+def test_release_workflows_include_wheel_smoke_test_and_clean_inputs():
+    repo_root = Path(__file__).resolve().parents[1]
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    bump_wf = (repo_root / ".github" / "workflows" / "bump-release.yml").read_text(encoding="utf-8")
+    publish_wf = (repo_root / ".github" / "workflows" / "publish-pypi.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "group: release-${{ inputs.tag || github.ref }}" in release_wf
+    assert "--with dist/*.whl" in release_wf
+    assert 'git checkout -B "$BRANCH_NAME"' in bump_wf
+    assert "github.event.inputs." not in publish_wf
+    assert "inputs.tag" in publish_wf
+    assert "inputs.target_env" in publish_wf

@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +25,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.state.outputs.tag }}
-      version: ${{ steps.state.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,7 +45,6 @@ jobs:
           TAG="${{ inputs.tag || github.ref_name }}"
           uv run --no-project python scripts/release.py --check --expect-tag "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build & verify artifacts
@@ -92,6 +90,9 @@ jobs:
           uv run --no-sync python scripts/build_plugin_zip.py
           uv build
           uv run --no-sync python -m zipfile -l dist/qgis_listener_v*.zip | grep -q "qgis_listener/metadata.txt"
+
+      - name: Smoke-test built wheel
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import qgis_mcp.server; print('OK:', qgis_mcp.server.mcp.name)"
 
       - name: Generate SHA256 checksums
         run: |
