@@ -1,0 +1,73 @@
+name: Publish to PyPI (manual recovery)
+
+# Recovery & TestPyPI workflow. The normal path is release.yml, which builds
+# once on tag push, creates the GitHub Release (with qgis_listener_v*.zip),
+# and publishes to PyPI. Use this workflow to test against TestPyPI or retry a
+# failed PyPI upload for an existing release tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (e.g. v0.1.1)"
+        required: true
+        type: string
+      target_env:
+        description: "Target repository"
+        required: true
+        default: "pypi"
+        type: choice
+        options:
+          - pypi
+          - testpypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-publish-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, Attest & Publish to PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ github.event.inputs.target_env }}
+      url: ${{ (github.event.inputs.target_env == 'testpypi') && 'https://test.pypi.org/p/luiccian-qgis-mcp' || 'https://pypi.org/p/luiccian-qgis-mcp' }}
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Verify tag matches package version
+        run: uv run --no-sync python scripts/release.py --check --expect-tag "${{ github.event.inputs.tag }}"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Generate GitHub artifact attestation (SLSA provenance)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/*"
+
+      - name: Publish to PyPI (production)
+        if: ${{ github.event.inputs.target_env == 'pypi' }}
+        uses: pypa/gh-action-pypi-publish@v1
+
+      - name: Publish to TestPyPI
+        if: ${{ github.event.inputs.target_env == 'testpypi' }}
+        uses: pypa/gh-action-pypi-publish@v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

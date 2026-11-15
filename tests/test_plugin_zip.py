@@ -175,3 +175,15 @@ def test_release_workflow_has_verify_build_gh_release_and_pypi_stages():
     assert "uv lock --check" in release_wf
     assert "pypa/gh-action-pypi-publish@" in release_wf
     assert "needs: [verify-tag, github-release]" in release_wf
+
+
+def test_manual_publish_pypi_recovery_workflow_exists_and_supports_testpypi():
+    repo_root = Path(__file__).resolve().parents[1]
+    wf_path = repo_root / ".github" / "workflows" / "publish-pypi.yml"
+    assert wf_path.is_file()
+    content = wf_path.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in content
+    assert "testpypi" in content
+    assert "https://test.pypi.org/legacy/" in content
+    assert "scripts/release.py --check --expect-tag" in content
+    assert "pypa/gh-action-pypi-publish@" in content
