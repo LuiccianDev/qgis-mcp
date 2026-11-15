@@ -130,3 +130,25 @@ def test_repository_has_no_unused_config_files_or_stale_doc_references():
     for removed in ("opencode", "qgis-mcp-launch.bat", "kimi-code", "windsurf", "lmstudio"):
         assert removed not in readme, removed
         assert removed not in agent_doc, removed
+
+
+def test_extract_changelog_section_returns_version_body_and_fallback(tmp_path):
+    from scripts import release
+
+    fake_repo = tmp_path / "repo"
+    fake_repo.mkdir()
+    (fake_repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [0.1.1] - 2026-11-15\n\n"
+        "### Fixed\n- Fix A\n\n"
+        "## [0.1.0] - 2026-11-10\n\nInitial.\n",
+        encoding="utf-8",
+    )
+
+    body = release.extract_changelog_section(fake_repo, "v0.1.1")
+    assert "### Fixed" in body
+    assert "- Fix A" in body
+    assert "## [0.1.0]" not in body
+
+    missing = release.extract_changelog_section(fake_repo, "v9.9.9")
+    assert "9.9.9" in missing
