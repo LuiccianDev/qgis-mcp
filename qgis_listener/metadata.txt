@@ -14,7 +14,7 @@ about=Socket server plugin that exposes QGIS operations to MCP clients.
     - Expression validation, project variables, settings access
     - Non-blocking TCP socket server with length-prefixed framing
     - Toolbar button with port configuration dropdown
-version=0.1.0
+version=0.1.1
 author=LuiccianDev
 email=luicciandev@users.noreply.github.com
 tags=mcp,ai,claude,llm,automation,socket,remote

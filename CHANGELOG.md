@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- Expand live integration tests coverage
+- Add input validation improvements for MCP tools
+- Consider publishing to QGIS Plugin Repository
+
+## [0.1.1] - 2026-11-15
+
+### Added
+- pytest-cov to CI for test coverage measurement (Codecov integration)
+- Pre-commit hooks for automatic formatting and linting (ruff + flake8)
+
 ### Fixed
 - Corregido `TypeError` al cargar herramientas: las firmas de `register_tools()` en los módulos de `tools/` ahora coinciden con las llamadas en `tools/__init__.py`.
 - Agregados imports faltantes: `ImageContent` y `Annotations` en `canvas.py`, `ProcessingParams` en `processing.py`, `TIMEOUT_LONG` en `vector_analysis.py`, `raster_compute.py`, `export.py` y `rendering.py`, `TransformCoordinatesParams` en `crs.py`, `FeatureQueryParams` en `features.py`.
@@ -22,17 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Eliminados archivos de configuración externos `.flake8` y `.pre-commit-config.yaml` junto con las dependencias/pasos externos de `flake8` y `bandit`.
 - Eliminados scripts de debug abandonados: `scripts/debug_extract.py` y `scripts/debug_extract2.py`.
-
-### Planned
-- Expand live integration tests coverage
-- Add input validation improvements for MCP tools
-- Consider publishing to QGIS Plugin Repository
-
-## [0.1.1] - 2026-11-12
-
-### Added
-- pytest-cov to CI for test coverage measurement (Codecov integration)
-- Pre-commit hooks for automatic formatting and linting (ruff + flake8)
 
 ## [0.1.0] - 2026-11-10
 

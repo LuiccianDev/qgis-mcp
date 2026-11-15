@@ -119,7 +119,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI (uv OIDC)
-    needs: build
+    needs: [build, github-release]
     if: ${{ vars.PYPI_PUBLISH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -136,4 +136,4 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Publish package to PyPI
-        run: uv publish
+        run: uv publish --trusted-publishing always
