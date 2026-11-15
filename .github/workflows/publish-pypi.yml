@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pypi-publish-${{ github.event.inputs.tag }}
+  group: pypi-publish-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -34,8 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
-      name: ${{ github.event.inputs.target_env }}
-      url: ${{ (github.event.inputs.target_env == 'testpypi') && 'https://test.pypi.org/p/luiccian-qgis-mcp' || 'https://pypi.org/p/luiccian-qgis-mcp' }}
+      name: ${{ inputs.target_env }}
+      url: ${{ (inputs.target_env == 'testpypi') && 'https://test.pypi.org/p/luiccian-qgis-mcp' || 'https://pypi.org/p/luiccian-qgis-mcp' }}
     permissions:
       id-token: write
       attestations: write
@@ -44,7 +44,7 @@ jobs:
       - name: Checkout the release tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -52,7 +52,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Verify tag matches package version
-        run: uv run --no-project python scripts/release.py --check --expect-tag "${{ github.event.inputs.tag }}"
+        run: uv run --no-project python scripts/release.py --check --expect-tag "${{ inputs.tag }}"
 
       - name: Build sdist and wheel
         run: uv build
@@ -63,11 +63,11 @@ jobs:
           subject-path: "dist/*"
 
       - name: Publish to PyPI (production)
-        if: ${{ github.event.inputs.target_env == 'pypi' }}
+        if: ${{ inputs.target_env == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
       - name: Publish to TestPyPI
-        if: ${{ github.event.inputs.target_env == 'testpypi' }}
+        if: ${{ inputs.target_env == 'testpypi' }}
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
