@@ -23,8 +23,7 @@ on:
         default: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: bump-release-${{ github.ref }}
@@ -34,11 +33,16 @@ jobs:
   bump:
     name: Prepare release PR
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.version.outputs.branch }}
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -73,6 +77,7 @@ jobs:
                   print(f"{major}.{minor}.{patch + 1}")
           ')
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "branch=release/v$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Bump version files & verify
         shell: bash
@@ -80,6 +85,7 @@ jobs:
           uv run --no-sync python scripts/release.py --set-version "${{ steps.version.outputs.target }}"
           uv lock
           uv run --no-sync python scripts/release.py --check
+          uv run --no-sync python scripts/release.py --extract-notes "v${{ steps.version.outputs.target }}" --output pr_body.md
           uv run --no-sync ruff check qgis_listener/ src/ tests/ install.py scripts/
           uv run --no-sync ruff format --check qgis_listener/ src/ tests/ install.py scripts/
           uv run --no-sync pytest tests/ \
@@ -88,23 +94,42 @@ jobs:
             --ignore=tests/test_tdd.py \
             -q
 
-      - name: Create release PR
+      - name: Create release branch and Pull Request
         if: ${{ !inputs.dry_run }}
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
-          commit-message: "chore(release): v${{ steps.version.outputs.target }}"
-          branch: "release/v${{ steps.version.outputs.target }}"
-          delete-branch: true
-          title: "chore(release): v${{ steps.version.outputs.target }}"
-          body: |
-            Automated version bump to `v${{ steps.version.outputs.target }}`.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH_NAME="${{ steps.version.outputs.branch }}"
+          git checkout -b "$BRANCH_NAME"
+          git add pyproject.toml qgis_listener/metadata.txt CHANGELOG.md uv.lock
+          git commit -m "chore(release): v${{ steps.version.outputs.target }}"
+          git push origin "$BRANCH_NAME" --force
+          {
+            cat pr_body.md
+            echo ""
+            echo "---"
+            echo "After merging this PR to \`master\`, create and push the release tag:"
+            echo "\`\`\`bash"
+            echo "git checkout master && git pull"
+            echo "git tag -a v${{ steps.version.outputs.target }} -m \"Release v${{ steps.version.outputs.target }}\""
+            echo "git push origin v${{ steps.version.outputs.target }}"
+            echo "\`\`\`"
+          } > full_pr_body.md
+          gh pr create \
+            --head "$BRANCH_NAME" \
+            --base master \
+            --title "chore(release): v${{ steps.version.outputs.target }}" \
+            --body-file full_pr_body.md || echo "Pull request already exists or updated"
 
-            - Updated `pyproject.toml`, `qgis_listener/metadata.txt`, and `CHANGELOG.md` via `scripts/release.py`.
-            - Verified `ruff check`, `ruff format --check`, and unit tests.
-
-            After merging this PR, create and push the release tag:
-            ```bash
-            git tag -a v${{ steps.version.outputs.target }} -m "Release v${{ steps.version.outputs.target }}"
-            git push origin v${{ steps.version.outputs.target }}
-            ```
+  ci:
+    name: CI on release branch
+    needs: bump
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yml
+    with:
+      ref: ${{ needs.bump.outputs.branch }}

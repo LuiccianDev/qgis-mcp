@@ -152,3 +152,14 @@ def test_extract_changelog_section_returns_version_body_and_fallback(tmp_path):
 
     missing = release.extract_changelog_section(fake_repo, "v9.9.9")
     assert "9.9.9" in missing
+
+
+def test_bump_release_and_tests_support_workflow_call_without_pat():
+    repo_root = Path(__file__).resolve().parents[1]
+    tests_wf = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    bump_wf = (repo_root / ".github" / "workflows" / "bump-release.yml").read_text(encoding="utf-8")
+
+    assert "workflow_call:" in tests_wf
+    assert "uses: ./.github/workflows/tests.yml" in bump_wf
+    assert "gh pr create" in bump_wf
+    assert "--extract-notes" in bump_wf
