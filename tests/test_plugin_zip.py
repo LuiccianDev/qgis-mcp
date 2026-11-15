@@ -163,3 +163,15 @@ def test_bump_release_and_tests_support_workflow_call_without_pat():
     assert "uses: ./.github/workflows/tests.yml" in bump_wf
     assert "gh pr create" in bump_wf
     assert "--extract-notes" in bump_wf
+
+
+def test_release_workflow_has_verify_build_gh_release_and_pypi_stages():
+    repo_root = Path(__file__).resolve().parents[1]
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "v[0-9]+.[0-9]+.[0-9]+" in release_wf
+    assert "workflow_dispatch:" in release_wf
+    assert "verify-tag:" in release_wf
+    assert "uv lock --check" in release_wf
+    assert "pypa/gh-action-pypi-publish@" in release_wf
+    assert "needs: [verify-tag, github-release]" in release_wf
