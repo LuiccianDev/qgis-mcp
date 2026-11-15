@@ -41,6 +41,7 @@ Configure a **Tag ruleset** targeting `refs/tags/v*`:
 4. `.github/workflows/release.yml` runs four isolated jobs: `verify-tag` (checks `pyproject.toml`, `metadata.txt`, and `CHANGELOG.md`), `build` (lockfile check, lint, unit tests, `qgis_listener_v*.zip`, wheel/sdist, `SHA256SUMS.txt`), `github-release` (SLSA provenance + GitHub Release with extracted changelog notes), and `publish-pypi` (`pypa/gh-action-pypi-publish` via OIDC + PEP 740 attestations in the `pypi` environment).
 5. To enable automatic PyPI publishing:
    - On PyPI (`pypi.org/manage/account/publishing/`), add a **Trusted Publisher** for owner `LuiccianDev`, repository `qgis-mcp`, workflow `release.yml`, and environment `pypi` (project `luiccian-qgis-mcp`).
+   - To also allow manual recovery via `publish-pypi.yml`, add a second Trusted Publisher on `pypi.org` for workflow `publish-pypi.yml` with environment `pypi` (and on `test.pypi.org` for workflow `publish-pypi.yml` with environment `testpypi`).
    - In GitHub (**Settings → Environments**), create the `pypi` environment (and optionally `testpypi` for staging).
    - In GitHub (**Settings → Secrets and variables → Actions → Variables**), set `PYPI_PUBLISH_ENABLED=true`.
 6. For manual recovery or **TestPyPI** verification on an existing tag, run **Actions → Publish to PyPI (manual recovery)** (`.github/workflows/publish-pypi.yml`) with `tag` and `target_env` (`pypi` or `testpypi`).

@@ -187,3 +187,25 @@ def test_manual_publish_pypi_recovery_workflow_exists_and_supports_testpypi():
     assert "https://test.pypi.org/legacy/" in content
     assert "scripts/release.py --check --expect-tag" in content
     assert "pypa/gh-action-pypi-publish@" in content
+
+
+def test_workflows_use_no_project_and_idempotent_release():
+    repo_root = Path(__file__).resolve().parents[1]
+    tests_wf = (repo_root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    release_wf = (repo_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish_wf = (repo_root / ".github" / "workflows" / "publish-pypi.yml").read_text(
+        encoding="utf-8"
+    )
+    gov_doc = (repo_root / "docs" / "github-governance.md").read_text(encoding="utf-8")
+
+    # Finding #1 & #4: stdlib-only scripts/release.py runs without pre-existing .venv via --no-project
+    assert "uv run --no-project python scripts/release.py --check --expect-tag" in release_wf
+    assert "uv run --no-project python scripts/release.py --extract-notes" in release_wf
+    assert "uv run --no-project python scripts/release.py --check --expect-tag" in publish_wf
+    # Finding #2 & #3: no conflicting --generate-notes and idempotent gh release upload
+    assert "--generate-notes" not in release_wf
+    assert "gh release upload" in release_wf
+    # Finding #5: tests.yml isolates concurrency per target ref
+    assert "inputs.ref || github.ref" in tests_wf
+    # Finding #6: governance doc mentions Trusted Publisher for publish-pypi.yml
+    assert "publish-pypi.yml" in gov_doc

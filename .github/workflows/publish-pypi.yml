@@ -52,7 +52,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Verify tag matches package version
-        run: uv run --no-sync python scripts/release.py --check --expect-tag "${{ github.event.inputs.tag }}"
+        run: uv run --no-project python scripts/release.py --check --expect-tag "${{ github.event.inputs.tag }}"
 
       - name: Build sdist and wheel
         run: uv build
