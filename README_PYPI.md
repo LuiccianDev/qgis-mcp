@@ -1,5 +1,11 @@
 # Luiccian QGIS MCP (`luiccian-qgis-mcp`)
 
+[![PyPI](https://img.shields.io/pypi/v/luiccian-qgis-mcp?color=blue)](https://pypi.org/project/luiccian-qgis-mcp/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
+[![QGIS](https://img.shields.io/badge/QGIS-3.28%E2%80%934.x-green)](https://qgis.org/)
+[![Tests](https://github.com/LuiccianDev/qgis-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/LuiccianDev/qgis-mcp/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20GPL--2.0--or--later-lightgrey)](https://github.com/LuiccianDev/qgis-mcp/blob/master/LICENSE)
+
 Model Context Protocol (MCP) server for controlling [QGIS](https://qgis.org/) (3.28–4.x) from AI coding agents (**Antigravity**, **Claude Code**, **Claude Desktop**, and any MCP-compatible client).
 
 > **Note — Two separate components:**
