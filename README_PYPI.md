@@ -6,12 +6,6 @@ Model Context Protocol (MCP) server for controlling [QGIS](https://qgis.org/) (3
 > This PyPI package (`luiccian-qgis-mcp`, **Apache-2.0**) provides **only the MCP server** (`src/qgis_mcp`).
 > To connect to QGIS, you also need the companion **Luiccian QGIS Listener** plugin (`qgis_listener`, **GPL-2.0-or-later**) installed inside QGIS. Download `qgis_listener_v<version>.zip` from [GitHub Releases](https://github.com/LuiccianDev/qgis-mcp/releases) and install it via **Plugins → Manage and Install Plugins → Install from ZIP**.
 
-## Architecture
-
-```text
-AI Agent  <--MCP (stdio / HTTP)-->  luiccian-qgis-mcp (PyPI)  <--TCP :9878-->  QGIS Listener Plugin
-```
-
 ## Quick Start
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
