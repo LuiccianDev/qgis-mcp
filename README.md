@@ -15,11 +15,11 @@ Connect [QGIS](https://qgis.org/) to any AI agent that speaks the [Model Context
 ## Architecture
 
 ```text
-AI Agent  <--MCP (stdio / HTTP)-->  luiccian-qgis-mcp (PyPI)  <--TCP :9878-->  QGIS Listener Plugin
+AI Agent  ←→  MCP Server (FastMCP)  ←→  TCP Socket  ←→  QGIS Plugin (QTimer)  ←→  PyQGIS API
 ```
 
 1. **QGIS Plugin** (`qgis_listener/`, **GPL-2.0-or-later**) — Runs inside QGIS as a non-blocking TCP socket server (`QTimer` loop) processing JSON commands on the main thread.
-2. **MCP Server** (`src/qgis_mcp/`, **Apache-2.0**) — Standalone Python process published as [`luiccian-qgis-mcp`](https://pypi.org/project/luiccian-qgis-mcp/) on PyPI, exposing QGIS operations via [FastMCP](https://gofastmcp.com/).
+2. **MCP Server** (`src/qgis_mcp/`, **Apache-2.0**) — Standalone Python process exposing QGIS operations via [FastMCP](https://gofastmcp.com/) (installable via [`luiccian-qgis-mcp`](https://pypi.org/project/luiccian-qgis-mcp/) on PyPI or from source).
 
 ---
 
