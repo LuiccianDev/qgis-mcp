@@ -1,3 +1,5 @@
+<div align="center">
+
 # Luiccian QGIS MCP
 
 [![PyPI](https://img.shields.io/pypi/v/luiccian-qgis-mcp?color=blue)](https://pypi.org/project/luiccian-qgis-mcp/)
@@ -8,7 +10,7 @@
 
 Connect [QGIS](https://qgis.org/) to any AI agent that speaks the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), so the agent drives QGIS directly: manage layers, edit features, run processing algorithms, render maps, author print layouts, and execute cross-layer SQL.
 
-**128 MCP tools** (or **27 grouped tools** in compound mode) compatible with **QGIS 3.28–4.x**. Built for **Antigravity**, **Claude Code**, **Claude Desktop**, and any MCP-compatible client.
+</div>
 
 ---
 
