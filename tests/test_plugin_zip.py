@@ -225,3 +225,14 @@ def test_release_workflows_include_wheel_smoke_test_and_clean_inputs():
     assert "github.event.inputs." not in publish_wf
     assert "inputs.tag" in publish_wf
     assert "inputs.target_env" in publish_wf
+
+
+def test_readme_reflects_pypi_publication_and_current_tooling():
+    repo_root = Path(__file__).resolve().parents[1]
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+
+    assert "Once published to PyPI" not in readme
+    assert "qgis_listener_v0-1-0.zip" not in readme
+    assert '"args": ["luiccian-qgis-mcp"]' in readme
+    assert "Python 3.12+" in readme
+    assert "ruff check" in readme
