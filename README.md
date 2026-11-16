@@ -1,3 +1,5 @@
+<div align="center">
+
 # Luiccian QGIS MCP
 
 [![PyPI](https://img.shields.io/pypi/v/luiccian-qgis-mcp?color=blue)](https://pypi.org/project/luiccian-qgis-mcp/)
@@ -8,18 +10,18 @@
 
 Connect [QGIS](https://qgis.org/) to any AI agent that speaks the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), so the agent drives QGIS directly: manage layers, edit features, run processing algorithms, render maps, author print layouts, and execute cross-layer SQL.
 
-**128 MCP tools** (or **27 grouped tools** in compound mode) compatible with **QGIS 3.28–4.x**. Built for **Antigravity**, **Claude Code**, **Claude Desktop**, and any MCP-compatible client.
+</div>
 
 ---
 
 ## Architecture
 
 ```text
-AI Agent  <--MCP (stdio / HTTP)-->  luiccian-qgis-mcp (PyPI)  <--TCP :9878-->  QGIS Listener Plugin
+AI Agent  ←→  MCP Server (FastMCP)  ←→  TCP Socket  ←→  QGIS Plugin (QTimer)  ←→  PyQGIS API
 ```
 
 1. **QGIS Plugin** (`qgis_listener/`, **GPL-2.0-or-later**) — Runs inside QGIS as a non-blocking TCP socket server (`QTimer` loop) processing JSON commands on the main thread.
-2. **MCP Server** (`src/qgis_mcp/`, **Apache-2.0**) — Standalone Python process published as [`luiccian-qgis-mcp`](https://pypi.org/project/luiccian-qgis-mcp/) on PyPI, exposing QGIS operations via [FastMCP](https://gofastmcp.com/).
+2. **MCP Server** (`src/qgis_mcp/`, **Apache-2.0**) — Standalone Python process exposing QGIS operations via [FastMCP](https://gofastmcp.com/) (installable via [`luiccian-qgis-mcp`](https://pypi.org/project/luiccian-qgis-mcp/) on PyPI or from source).
 
 ---
 
