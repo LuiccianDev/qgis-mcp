@@ -350,8 +350,10 @@ async def test_compound_render_and_query_annotations_and_destructive_confirmatio
 
     render_tool = mcp._tool_manager.get_tool("render")
     query_tool = mcp._tool_manager.get_tool("query")
-    assert render_tool.annotations.destructiveHint is True
-    assert query_tool.annotations.readOnlyHint is not True
+    render_ann = render_tool.annotations.model_dump(by_alias=True)
+    query_ann = query_tool.annotations.model_dump(by_alias=True)
+    assert render_ann.get("destructiveHint") is True
+    assert query_ann.get("readOnlyHint") is not True
 
     for tool_name, action, params in (
         ("render", "remove_item", {"layout_name": "L", "item_id": "I1"}),
