@@ -393,3 +393,23 @@ async def test_handle_completion_ignores_malformed_layer_entries(mock_connection
     completion = await srv.handle_completion(None, SimpleNamespace(name="layer_id", value="roads"))
     assert completion is not None
     assert completion.values == ["roads_1"]
+
+
+def test_streamable_http_refuses_to_proxy_an_active_shared_token_by_default(monkeypatch):
+    monkeypatch.setenv("QGIS_MCP_TRANSPORT", "streamable-http")
+    monkeypatch.delenv("QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP", raising=False)
+    monkeypatch.setattr(srv, "get_auth_token", lambda: "secret-token")
+    run_mock = MagicMock()
+    monkeypatch.setattr(srv.mcp, "run", run_mock)
+
+    with pytest.raises(SystemExit, match="streamable-http"):
+        srv.main()
+    run_mock.assert_not_called()
+
+    monkeypatch.setenv("QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP", "1")
+    srv.main()
+    run_mock.assert_called_once_with(transport="streamable-http")
+
+    monkeypatch.delenv("QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP", raising=False)
+    with pytest.raises(ToolError, match="streamable-http"):
+        _send_sync("ping")

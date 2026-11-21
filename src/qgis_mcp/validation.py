@@ -4,6 +4,7 @@ Uses Pydantic to validate common parameters before they reach the plugin,
 catching invalid inputs early with clear ToolError messages.
 """
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -120,6 +121,10 @@ class PostgreSQLConnectionParams(BaseModel):
         default="prefer",
         description="SSL mode: prefer, disable, allow, require, verify-ca, verify-full",
     )
+    host: str | None = Field(default=None, description="Database host")
+    database: str | None = Field(default=None, description="Database name")
+    service: str | None = Field(default=None, description="pg_service.conf service name")
+    auth_config_id: str | None = Field(default=None, description="QGIS Auth Manager config ID")
 
     @field_validator("name")
     @classmethod
@@ -127,6 +132,16 @@ class PostgreSQLConnectionParams(BaseModel):
         stripped = v.strip()
         if not stripped:
             raise ValueError("connection name must not be empty")
+        return stripped
+
+    @field_validator("host", "database", "service", "auth_config_id")
+    @classmethod
+    def no_uri_metacharacters(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if re.search(r"[\s'\"\\=\x00-\x1f]", stripped):
+            raise ValueError("must not contain whitespace, quotes, backslashes, or '='")
         return stripped
 
     @field_validator("ssl_mode")

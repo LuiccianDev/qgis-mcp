@@ -388,6 +388,7 @@ class ProcessingHandlers:
 
     # Finished jobs kept for get_processing_job; the oldest are dropped first.
     _MAX_JOBS = 50
+    _MAX_RUNNING_JOBS = 10
 
     @staticmethod
     def _prepare_job_parameters(alg, parameters, load_results, project):
@@ -446,6 +447,12 @@ class ProcessingHandlers:
             raise CommandError(
                 f"{algorithm} must run on QGIS's main thread, so it cannot be a "
                 "background job. Use execute_processing."
+            )
+        running = sum(1 for j in self._jobs.values() if j["state"] == "running")
+        if running >= self._MAX_RUNNING_JOBS:
+            raise CommandError(
+                f"Too many concurrent background jobs ({running}/{self._MAX_RUNNING_JOBS}); "
+                "wait for one to finish or cancel it."
             )
         feedback = _CollectingFeedback()
         context = self._ellipsoid_context(ellipsoid, feedback) or dataobjects.createContext(
@@ -948,6 +955,7 @@ class ProcessingHandlers:
         Returns ``(final_name, target_path)``: *final_name* carries a ``_2``,
         ``_3`` ... suffix when the file for *name* is already there.
         """
+        self._check_safe_filename(name, "Model 'name'")
         models_dir = None
         if provider is not None and hasattr(provider, "modelsFolder"):
             with contextlib.suppress(Exception):

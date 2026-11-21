@@ -32,13 +32,13 @@ from ..compat import (
     CONTRAST_STRETCH_MINMAX,
     GRAY_BLACK_TO_WHITE,
     GRAY_WHITE_TO_BLACK,
-    RASTER_STATS_ALL,
     SHADER_CLASS_CONTINUOUS,
     SHADER_CLASS_EQUAL_INTERVAL,
     SHADER_CLASS_QUANTILE,
     SHADER_DISCRETE,
     SHADER_EXACT,
     SHADER_INTERPOLATED,
+    band_statistics,
 )
 from ..errors import CommandError
 from ..registry import command
@@ -191,7 +191,7 @@ class StyleHandlers:
         """Resolve a band's min/max, falling back to its statistics."""
         if min_value is not None and max_value is not None:
             return float(min_value), float(max_value)
-        stats = provider.bandStatistics(band, RASTER_STATS_ALL, QgsRectangle(), 0)
+        stats = band_statistics(provider, band)
         lo = stats.minimumValue if min_value is None else float(min_value)
         hi = stats.maximumValue if max_value is None else float(max_value)
         return float(lo), float(hi)

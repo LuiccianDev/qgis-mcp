@@ -28,6 +28,14 @@ from qgis_mcp.helpers import (
     make_render_response,
 )
 from qgis_mcp.tools.base import Context, FastMCP
+from qgis_mcp.validation import (
+    BatchCommandItem,
+    FeatureQueryParams,
+    LayerPaginationParams,
+    PostgreSQLConnectionParams,
+    RenderMapParams,
+    validate_params,
+)
 
 # Appended to every compound tool description so agents know where the
 # per-action parameters go (they are NOT top-level tool arguments).
@@ -47,8 +55,40 @@ _LAYOUT_ITEM_COMMANDS = {
     "add_table": "add_layout_table",
     "add_grid": "add_layout_grid",
     "update_item": "update_layout_item",
-    "remove_item": "remove_layout_item",
     "configure_atlas": "configure_atlas",
+}
+
+_LAYOUT_ITEM_PARAMS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "add_map": (("layout_name",), ("x", "y", "width", "height", "extent", "scale")),
+    "add_label": (
+        ("layout_name", "text"),
+        ("x", "y", "width", "height", "font_size", "color"),
+    ),
+    "add_legend": (
+        ("layout_name",),
+        ("map_item_id", "x", "y", "width", "height", "title", "layer_ids"),
+    ),
+    "add_scalebar": (
+        ("layout_name",),
+        ("map_item_id", "x", "y", "width", "height", "style"),
+    ),
+    "add_picture": (("layout_name", "path"), ("x", "y", "width", "height")),
+    "add_table": (
+        ("layout_name", "layer_id"),
+        ("x", "y", "width", "height", "max_rows"),
+    ),
+    "add_grid": (
+        ("layout_name",),
+        ("interval_x", "interval_y", "map_item_id", "name", "show_annotations", "crs"),
+    ),
+    "update_item": (
+        ("layout_name", "item_id"),
+        ("x", "y", "width", "height", "text", "visible"),
+    ),
+    "configure_atlas": (
+        ("layout_name", "coverage_layer"),
+        ("enabled", "page_name_expression", "filter_expression", "sort_expression"),
+    ),
 }
 
 
@@ -89,14 +129,6 @@ class _Params(dict):
     def __contains__(self, key):
         self._read.add(key)
         return super().__contains__(key)
-
-    def forwarded(self) -> dict:
-        """All params as a plain dict, for a handler that passes them through.
-
-        The plugin then validates them against the command's signature itself.
-        """
-        self._read.update(self)
-        return dict(self)
 
     def check_all_read(self):
         unused = sorted(set(self) - self._read)
@@ -213,6 +245,10 @@ class CompoundToolset:
         async def project_export_session(ctx, kwargs):
             payload: dict[str, Any] = {}
             if kwargs.get("path"):
+                if not await self._confirm_destructive(
+                    ctx, f"Write session replay script to '{kwargs['path']}'?"
+                ):
+                    return {"ok": False, "message": "Cancelled by user"}
                 payload["path"] = kwargs["path"]
             if kwargs.get("clear"):
                 payload["clear"] = True
@@ -339,11 +375,16 @@ class CompoundToolset:
         }
 
     def _layer_query_actions(self) -> dict[str, _Action]:
+        async def layer_list(ctx, kwargs):
+            v = validate_params(
+                LayerPaginationParams,
+                limit=kwargs.get("limit", 50),
+                offset=kwargs.get("offset", 0),
+            )
+            return await self._send("get_layers", {"limit": v.limit, "offset": v.offset})
+
         return {
-            "list": lambda ctx, kwargs: self._send(
-                "get_layers",
-                {"limit": kwargs.get("limit", 50), "offset": kwargs.get("offset", 0)},
-            ),
+            "list": layer_list,
             "find": lambda ctx, kwargs: self._send(
                 "find_layer", {"name_pattern": kwargs["name_pattern"]}
             ),
@@ -461,12 +502,18 @@ class CompoundToolset:
 
     def _register_features(self) -> None:
         async def features_get(ctx, kwargs):
-            if refusal := feature_limit_error(kwargs.get("limit", 10)):
+            limit = kwargs.get("limit", 10)
+            if (
+                isinstance(limit, int)
+                and not isinstance(limit, bool)
+                and (refusal := feature_limit_error(limit))
+            ):
                 raise ToolError(refusal)
+            v = validate_params(FeatureQueryParams, limit=limit, offset=kwargs.get("offset", 0))
             payload = {
                 "layer_id": kwargs["layer_id"],
-                "limit": kwargs.get("limit", 10),
-                "offset": kwargs.get("offset", 0),
+                "limit": v.limit,
+                "offset": v.offset,
                 "include_geometry": kwargs.get("include_geometry", False),
             }
             if "expression" in kwargs:
@@ -614,14 +661,20 @@ class CompoundToolset:
 
     def _connection_actions(self) -> dict[str, _Action]:
         async def connection_add_layer(ctx, kwargs):
+            connection = kwargs["connection"]
+            sql = kwargs.get("sql")
+            if sql and not await self._confirm_destructive(
+                ctx, f"Create SQL layer on connection '{connection}'?\n\n{sql}"
+            ):
+                return {"ok": False, "message": "Cancelled by user"}
             result = await self._send(
                 "add_layer_from_connection",
                 {
                     "provider": kwargs["provider"],
-                    "connection": kwargs["connection"],
+                    "connection": connection,
                     "table": kwargs.get("table"),
                     "schema": kwargs.get("schema"),
-                    "sql": kwargs.get("sql"),
+                    "sql": sql,
                     "geometry_column": kwargs.get("geometry_column"),
                     "primary_key": kwargs.get("primary_key"),
                     "name": kwargs.get("name"),
@@ -668,24 +721,37 @@ class CompoundToolset:
                 timeout=TIMEOUT_LONG,
             )
 
+        async def connection_create(ctx, kwargs):
+            v = validate_params(
+                PostgreSQLConnectionParams,
+                name=kwargs["name"],
+                port=kwargs.get("port"),
+                ssl_mode=kwargs.get("ssl_mode", "prefer"),
+                host=kwargs.get("host"),
+                database=kwargs.get("database"),
+                service=kwargs.get("service"),
+                auth_config_id=kwargs.get("auth_config_id"),
+            )
+            return await self._send(
+                "create_postgresql_connection",
+                {
+                    "name": v.name,
+                    "connection_mode": kwargs["connection_mode"],
+                    "host": v.host,
+                    "port": v.port,
+                    "database": v.database,
+                    "auth_config_id": v.auth_config_id,
+                    "ssl_mode": v.ssl_mode,
+                    "service": v.service,
+                },
+                timeout=TIMEOUT_LONG,
+            )
+
         return {
             "list": lambda ctx, kwargs: self._send(
                 "list_connections", {"provider": kwargs.get("provider")}
             ),
-            "create": lambda ctx, kwargs: self._send(
-                "create_postgresql_connection",
-                {
-                    "name": kwargs["name"],
-                    "connection_mode": kwargs["connection_mode"],
-                    "host": kwargs.get("host"),
-                    "port": kwargs.get("port"),
-                    "database": kwargs.get("database"),
-                    "auth_config_id": kwargs.get("auth_config_id"),
-                    "ssl_mode": kwargs.get("ssl_mode", "prefer"),
-                    "service": kwargs.get("service"),
-                },
-                timeout=TIMEOUT_LONG,
-            ),
+            "create": connection_create,
             "list_tables": lambda ctx, kwargs: self._send(
                 "list_connection_tables",
                 {
@@ -849,21 +915,36 @@ class CompoundToolset:
 
     def _register_render(self) -> None:
         async def render_map(ctx, kwargs):
+            v = validate_params(
+                RenderMapParams,
+                width=kwargs.get("width", 800),
+                height=kwargs.get("height", 600),
+            )
             await ctx.info("Rendering map...")
             await ctx.report_progress(0, 100)
-            payload = {"width": kwargs.get("width", 800), "height": kwargs.get("height", 600)}
+            payload: dict[str, Any] = {"width": v.width, "height": v.height}
             path = kwargs.get("path")
             if path:
                 payload["path"] = path
             result = await self._send("render_map_base64", payload, timeout=TIMEOUT_LONG)
             await ctx.report_progress(100, 100)
-            return make_render_response(result, payload["width"], payload["height"], path)
+            return make_render_response(result, v.width, v.height, path)
 
         async def render_remove_layout(ctx, kwargs):
             name = kwargs["layout_name"]
             if not await self._confirm_destructive(ctx, f"Remove layout '{name}'?"):
                 return {"ok": False, "message": "Cancelled by user"}
             return await self._send("remove_layout", {"layout_name": name})
+
+        async def render_remove_item(ctx, kwargs):
+            layout_name, item_id = kwargs["layout_name"], kwargs["item_id"]
+            if not await self._confirm_destructive(
+                ctx, f"Remove item '{item_id}' from layout '{layout_name}'?"
+            ):
+                return {"ok": False, "message": "Cancelled by user"}
+            return await self._send(
+                "remove_layout_item", {"layout_name": layout_name, "item_id": item_id}
+            )
 
         async def render_export_atlas(ctx, kwargs):
             await ctx.info(f"Exporting atlas '{kwargs['layout_name']}'")
@@ -905,10 +986,13 @@ class CompoundToolset:
             "export_atlas": render_export_atlas,
             **{
                 item_action: (
-                    lambda ctx, kwargs, command=command: self._send(command, kwargs.forwarded())
+                    lambda ctx, kwargs, command=_LAYOUT_ITEM_COMMANDS[item_action], req=req, opt=opt: (
+                        self._send(command, _picked(kwargs, req, opt))
+                    )
                 )
-                for item_action, command in _LAYOUT_ITEM_COMMANDS.items()
+                for item_action, (req, opt) in _LAYOUT_ITEM_PARAMS.items()
             },
+            "remove_item": render_remove_item,
         }
 
         @self.mcp.tool(
@@ -939,7 +1023,7 @@ class CompoundToolset:
                 "- export_atlas: layout_name (str), output_path (str), format (str, default 'pdf'), dpi (int, default 300)"
                 f"{_PARAMS_NOTE}"
             ),
-            annotations=ToolAnnotations(idempotentHint=True),
+            annotations=ToolAnnotations(destructiveHint=True),
         )
         async def render(
             ctx: Context, action: str, params: dict[str, Any] | None = None
@@ -1116,6 +1200,7 @@ class CompoundToolset:
             for cmd in commands:
                 if not isinstance(cmd, dict):
                     raise ToolError(f"Each command must be an object, got {type(cmd).__name__}")
+                validate_params(BatchCommandItem, **cmd)
                 cmd_type = cmd.get("type", "")
                 if cmd_type in BATCH_BLOCKED_COMMANDS:
                     raise ToolError(
@@ -1171,8 +1256,11 @@ class CompoundToolset:
             return await _dispatch("layer_tree", layer_tree_actions, ctx, action, params)
 
         async def plugins_reload(ctx, kwargs):
-            await ctx.info(f"Reloading plugin: {kwargs['plugin_name']}")
-            return await self._send("reload_plugin", {"plugin_name": kwargs["plugin_name"]})
+            plugin_name = kwargs["plugin_name"]
+            if not await self._confirm_destructive(ctx, f"Reload plugin '{plugin_name}'?"):
+                return {"ok": False, "message": "Cancelled by user"}
+            await ctx.info(f"Reloading plugin: {plugin_name}")
+            return await self._send("reload_plugin", {"plugin_name": plugin_name})
 
         plugins_actions: dict[str, _Action] = {
             "list": lambda ctx, kwargs: self._send(
@@ -1306,7 +1394,7 @@ class CompoundToolset:
                 "layer_ids (list[str], optional), limit (int, default 10), crs (str, optional)"
                 f"{_PARAMS_NOTE}"
             ),
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(),
         )
         async def query(
             ctx: Context, action: str, params: dict[str, Any] | None = None

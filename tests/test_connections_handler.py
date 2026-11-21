@@ -118,6 +118,22 @@ def test_service_with_auth_manager_checks_the_config_exists(qgis):
             },
             "Unknown SSL",
         ),
+        (
+            {
+                "host": "db' password='leak",
+                "port": 5432,
+                "database": "d",
+                "auth_config_id": "authcfg1",
+            },
+            "must not contain",
+        ),
+        (
+            {
+                "connection_mode": "service_only",
+                "service": "svc password=leak",
+            },
+            "must not contain",
+        ),
     ],
 )
 def test_rejects_bad_parameters_before_touching_qgis(qgis, params, message):
@@ -169,6 +185,18 @@ def test_connection_test_never_opens_the_credentials_dialog(handlers, qgis):
         ('dbname="gis" password="se\\"cret"', 'dbname="gis" password=***'),
         ("host=db sslpassword=secret port=5432", "host=db sslpassword=*** port=5432"),
         ("host=db pwd=secret", "host=db pwd=***"),
+        (
+            "https://alice:s3cr3t@tiles.example.test/{z}/{x}/{y}.png",
+            "https://alice:***@tiles.example.test/{z}/{x}/{y}.png",
+        ),
+        (
+            "https://alice:p@ss@tiles.example.test/{z}/{x}/{y}.png",
+            "https://alice:***@tiles.example.test/{z}/{x}/{y}.png",
+        ),
+        (
+            "https://:tok3n@tiles.example.test/{z}/{x}/{y}.png",
+            "https://:***@tiles.example.test/{z}/{x}/{y}.png",
+        ),
     ],
 )
 def test_redact_uri_leaves_no_secret_behind(server_class, uri, expected):

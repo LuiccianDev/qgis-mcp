@@ -410,7 +410,7 @@ def test_all_toolset_methods_stay_concise():
 
 
 def test_handlers_avoid_deprecated_qgsfield_and_band_statistics():
-    """Handlers use compat.make_field and 4-arg bandStatistics(band, stats, extent, sampleSize)."""
+    """Handlers use compat.make_field and compat.band_statistics instead of direct calls."""
     qgsfield_offenders = []
     bandstats_offenders = []
     for name, src in _handler_modules():
@@ -420,14 +420,9 @@ def test_handlers_avoid_deprecated_qgsfield_and_band_statistics():
                 continue
             if isinstance(node.func, ast.Name) and node.func.id == "QgsField":
                 qgsfield_offenders.append(f"handlers/{name}:{node.lineno}")
-            elif (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == "bandStatistics"
-                and len(node.args) < 4
-                and "extent" not in {kw.arg for kw in node.keywords}
-            ):
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "bandStatistics":
                 bandstats_offenders.append(f"handlers/{name}:{node.lineno}")
     assert not qgsfield_offenders, f"Direct QgsField() call in handlers: {qgsfield_offenders}"
     assert not bandstats_offenders, (
-        f"Deprecated 2-arg bandStatistics() call in handlers: {bandstats_offenders}"
+        f"Direct .bandStatistics() call in handlers (use compat.band_statistics): {bandstats_offenders}"
     )

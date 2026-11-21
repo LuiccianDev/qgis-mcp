@@ -31,9 +31,10 @@ def test_parse_instances_name_port():
 
 def test_parse_instances_host_port():
     """`name=host:port` entries carry their own host."""
-    assert srv.parse_instances("lab=192.168.1.5:9876, local = 9877 ") == {
+    assert srv.parse_instances("lab=192.168.1.5:9876, local = 9877 , v6=[::1]:9878") == {
         "lab": ("192.168.1.5", 9876),
         "local": ("localhost", 9877),
+        "v6": ("::1", 9878),
     }
 
 
@@ -93,6 +94,8 @@ def test_resolve_instance_defaults_to_default():
     with patch.dict(os.environ, {}, clear=True):
         assert srv.resolve_instance(None) == "default"
         assert srv.resolve_instance("default") == "default"
+        with pytest.raises(ValueError, match="Unknown QGIS instance: ''"):
+            srv.resolve_instance("")
 
 
 def test_unknown_instance_error_lists_configured_names():

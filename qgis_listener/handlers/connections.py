@@ -54,15 +54,7 @@ class _QuietCredentials(QgsCredentials):
 class ConnectionHandlers:
     """Saved data source connections - the Browser panel entries."""
 
-    # Connection URIs carry saved credentials; never hand those to a client.
-    # A quoted value may contain a backslash-escaped quote, so the quoted branches
-    # consume escape pairs rather than stopping at the first inner quote. libpq
-    # `sslpassword` is spelled out because \b never falls inside a longer word.
-    _URI_SECRET_RE = re.compile(
-        r"\b(sslpassword|password|pass|pwd)="
-        r"('(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|\S*)",
-        re.IGNORECASE,
-    )
+    _PG_FORBIDDEN_CHARS = re.compile(r"[\s'\"\\=\x00-\x1f]")
 
     _CONN_TABLE_FLAG_NAMES: ClassVar[tuple] = (
         ("vector", CONN_TABLE_VECTOR),
@@ -79,10 +71,6 @@ class ConnectionHandlers:
         "verify-ca": URI_SSL_VERIFY_CA,
         "verify-full": URI_SSL_VERIFY_FULL,
     }
-
-    @classmethod
-    def _redact_uri(cls, uri):
-        return cls._URI_SECRET_RE.sub(r"\1=***", uri or "")
 
     def _connection(self, provider, connection):
         """Look up a saved provider connection by name, or raise."""
@@ -176,9 +164,9 @@ class ConnectionHandlers:
             quiet.setInstance(previous)
         return connection
 
-    @staticmethod
+    @classmethod
     def _validate_pg_params(
-        connection_mode, required, name, host, port, database, auth_config_id, service
+        cls, connection_mode, required, name, host, port, database, auth_config_id, service
     ):
         """Normalize and validate PostgreSQL connection parameters for *connection_mode*."""
         given = {
@@ -197,6 +185,11 @@ class ConnectionHandlers:
         for key, value in given.items():
             if value and key not in allowed:
                 raise CommandError(f"{key} is not used by connection_mode {connection_mode!r}")
+        for key in ("host", "database", "service", "auth_config_id"):
+            if given[key] and cls._PG_FORBIDDEN_CHARS.search(given[key]):
+                raise CommandError(
+                    f"{key} must not contain whitespace, quotes, backslashes, or '='"
+                )
         parsed_port = None
         if "port" in required:
             port_error = "PostgreSQL port must be an integer from 1 to 65535"
