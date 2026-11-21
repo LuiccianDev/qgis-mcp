@@ -62,6 +62,7 @@ class SessionToolset(BaseToolset):
 
         @mcp.tool(
             title="Export Session Script",
+            annotations=ToolAnnotations(destructiveHint=True),
             description="Every command that changed something in this QGIS since the plugin's server "
             "started (read-only calls left out), as a Python script that replays them from the QGIS "
             "Python console. Layer ids are remapped on replay. Returns the script, or writes it to "
@@ -74,6 +75,10 @@ class SessionToolset(BaseToolset):
             clear: bool = False,
             instance: str | None = None,
         ) -> dict:
+            if path and not await self._confirm_destructive(
+                ctx, f"Write session replay script to '{path}'?"
+            ):
+                return {"ok": False, "message": "Cancelled by user"}
             params: dict[str, Any] = {}
             if path:
                 params["path"] = path

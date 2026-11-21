@@ -7,8 +7,10 @@ Layer *content* (features, fields, expressions) lives in ``features``; layer
 import fnmatch
 import math
 import os
+import re
 import tempfile
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 from qgis.core import (
     QgsLayerTreeGroup,
@@ -17,7 +19,6 @@ from qgis.core import (
     QgsMessageLog,
     QgsProject,
     QgsRasterLayer,
-    QgsRectangle,
     QgsVectorLayer,
     QgsVectorLayerJoinInfo,
 )
@@ -30,8 +31,8 @@ from ..compat import (
     MSG_INFO,
     MSG_WARNING,
     RASTER_ALPHA_BAND,
-    RASTER_STATS_ALL,
     RENDER_UNIT_POINTS,
+    band_statistics,
 )
 from ..errors import CommandError
 from ..registry import command
@@ -184,7 +185,7 @@ class LayerHandlers:
         for band in range(1, layer.bandCount() + 1):
             band_info = {"band": band}
             try:
-                stats = dp.bandStatistics(band, RASTER_STATS_ALL, QgsRectangle(), 0)
+                stats = band_statistics(dp, band)
                 band_info.update(
                     {
                         "min": stats.minimumValue,
@@ -226,7 +227,7 @@ class LayerHandlers:
             "type": self._get_layer_type(layer),
             "crs": layer.crs().authid(),
             "extent": self._extent_dict(extent),
-            "source": layer.source(),
+            "source": self._redact_uri(layer.source()),
             "provider": layer.providerType(),
             "is_valid": layer.isValid(),
         }
@@ -591,8 +592,41 @@ class LayerHandlers:
     }
     _WEB_FIXED_CRS = "EPSG:3857"
 
+    @staticmethod
+    def _validate_http_url(value):
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+            raise CommandError("Web layer URL must use http:// or https://")
+
+    @classmethod
+    def _validate_web_source(cls, service, url):
+        if (
+            not isinstance(url, str)
+            or not url.strip()
+            or any(c in url for c in ("\r", "\n", "\x00"))
+        ):
+            raise CommandError("Invalid web layer URL")
+        if re.search(r"(^|[&\s?'\"])authcfg\s*=", url, re.IGNORECASE):
+            raise CommandError("Web layer URL must not inject authcfg provider parameters")
+        if service == "xyz":
+            cls._validate_http_url(url)
+            if "&" in url:
+                raise CommandError(
+                    "XYZ tile URL must not contain raw '&' (URL-encode query parameters as %26)"
+                )
+            return
+        if service == "wms" and re.search(r"(^|[&\s])type\s*=\s*xyz\b", url, re.IGNORECASE):
+            raise CommandError("Use service='xyz' for XYZ tile layers")
+        url_params = re.findall(r"(?:^|[&\s])url\s*=\s*('[^']*'|\"[^\"]*\"|[^\s&]+)", url, re.I)
+        if url_params:
+            for raw in url_params:
+                cls._validate_http_url(raw.strip("'\""))
+        else:
+            cls._validate_http_url(url)
+
     def _web_layer_uri(self, service, url, crs, prefix):
         """Build the provider uri, applying *crs* where the service accepts one."""
+        self._validate_web_source(service, url)
         uri = prefix + url
         if not crs:
             return uri

@@ -685,8 +685,15 @@ CONFIRMATION_GATED_TOOLS = [
     ("delete_field", {"layer_id": "L1", "field_name": "obsolete"}),
     ("rollback_edits", {"layer_id": "L1"}),
     ("remove_layout", {"layout_name": "Map1"}),
+    ("remove_layout_item", {"layout_name": "Map1", "item_id": "item1"}),
+    ("reload_plugin", {"plugin_name": "my_plugin"}),
+    ("export_session", {"path": "/tmp/replay.py"}),
     ("set_setting", {"key": "qgis/x", "value": "1"}),
     ("execute_code", {"code": "x = 1"}),
+    (
+        "add_layer_from_connection",
+        {"provider": "postgres", "connection": "gis", "sql": "SELECT 1"},
+    ),
     (
         "execute_connection_sql",
         {"provider": "postgres", "connection": "gis", "sql": "DROP TABLE t"},
@@ -1380,11 +1387,19 @@ async def test_import_layer_to_connection_confirms_only_on_overwrite(mock_connec
 
 
 def test_confirmation_gated_commands_blocked_in_batch():
-    """Batch must not be a way to skip the elicitation on the new destructive commands."""
+    """Batch must not be a way to skip elicitation or destructiveHint on destructive commands."""
     assert {
         "rollback_edits",
         "execute_connection_sql",
         "import_layer_to_connection",
+        "add_layer_from_connection",
+        "delete_field",
+        "remove_layout",
+        "remove_layout_item",
+        "restore_checkpoint",
+        "load_project",
+        "create_new_project",
+        "export_session",
     } <= BATCH_BLOCKED_COMMANDS
 
 

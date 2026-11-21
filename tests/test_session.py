@@ -314,3 +314,57 @@ def test_restore_reports_layers_whose_source_went_missing(server, plugin_handler
 
     assert response["unavailable_layers"] == ["roads"]
     server.stop()
+
+
+def test_start_processing_job_caps_concurrent_running_jobs(server, algorithm, plugin_handlers):
+    for i in range(server._MAX_RUNNING_JOBS):
+        server.start_processing_job("native:buffer", {"OUTPUT": f"/tmp/o_{i}.gpkg"})
+    with pytest.raises(plugin_handlers.processing.CommandError, match="concurrent"):
+        server.start_processing_job("native:buffer", {"OUTPUT": "/tmp/o_overflow.gpkg"})
+
+
+@pytest.mark.parametrize(
+    "bad_name", ["../escape", "sub/model", r"sub\model", "/abs/model", "C:escape"]
+)
+def test_create_processing_model_rejects_path_traversal_names(server, plugin_handlers, bad_name):
+    with pytest.raises(plugin_handlers.processing.CommandError, match="path"):
+        server.create_processing_model(
+            name=bad_name,
+            steps=[{"id": "s1", "algorithm": "native:buffer", "parameters": {}}],
+        )
+
+
+@pytest.mark.parametrize(
+    ("service", "bad_url"),
+    [
+        ("xyz", "file:///etc/passwd"),
+        ("wms", "file:///etc/passwd"),
+        ("wms", "file:///etc/passwd?http://x"),
+        ("wms", "type=xyz&url=file:///etc/passwd&referer=https://x"),
+        ("wfs", "url='https://wfs.example.test'authcfg='leak'"),
+        ("xyz", "https://tiles.example.test/{z}/{x}/{y}.png&authcfg=leak"),
+        ("wms", "https://wms.example.test/ows?SERVICE=WMS&authcfg=leak"),
+    ],
+)
+def test_add_web_layer_rejects_non_http_and_injected_provider_params(
+    server, plugin_handlers, service, bad_url
+):
+    with pytest.raises(plugin_handlers.layers.CommandError):
+        server.add_web_layer(url=bad_url, service=service)
+
+
+def test_get_layer_info_redacts_embedded_credentials_in_source(server, monkeypatch):
+    layer = MagicMock()
+    layer.id.return_value = "L1"
+    layer.name.return_value = "db_layer"
+    layer.source.return_value = (
+        "dbname='gis' host=db port=5432 password='topsecret' table=\"public\".\"t\""
+    )
+    layer.providerType.return_value = "postgres"
+    layer.isValid.return_value = True
+    monkeypatch.setattr(server, "_layer", lambda lid: layer)
+
+    info = server.get_layer_info("L1")
+
+    assert "topsecret" not in info["source"]
+    assert "password=***" in info["source"]

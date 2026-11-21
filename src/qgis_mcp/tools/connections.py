@@ -61,19 +61,26 @@ class ConnectionsToolset(BaseToolset):
             instance: str | None = None,
         ) -> dict[str, Any]:
             validated = self.validate(
-                PostgreSQLConnectionParams, name=name, port=port, ssl_mode=ssl_mode
+                PostgreSQLConnectionParams,
+                name=name,
+                port=port,
+                ssl_mode=ssl_mode,
+                host=host,
+                database=database,
+                service=service,
+                auth_config_id=auth_config_id,
             )
             return await _send(
                 "create_postgresql_connection",
                 {
                     "name": validated.name,
                     "connection_mode": connection_mode,
-                    "host": host,
+                    "host": validated.host,
                     "port": validated.port,
-                    "database": database,
-                    "auth_config_id": auth_config_id,
+                    "database": validated.database,
+                    "auth_config_id": validated.auth_config_id,
                     "ssl_mode": validated.ssl_mode,
-                    "service": service,
+                    "service": validated.service,
                 },
                 timeout=timeout_long,
                 instance=instance,
@@ -109,6 +116,7 @@ class ConnectionsToolset(BaseToolset):
 
         @mcp.tool(
             title="Add Layer from Connection",
+            annotations=ToolAnnotations(destructiveHint=True),
             description="Load a table from a saved connection as a project layer. Pass table (+ schema), "
             "or sql to build a query layer executed by the database. For a SQL layer, geometry_column "
             "and primary_key may be needed for QGIS to map/identify the result.",
@@ -124,7 +132,11 @@ class ConnectionsToolset(BaseToolset):
             primary_key: str | None = None,
             name: str | None = None,
             instance: str | None = None,
-        ) -> list:
+        ) -> list | dict[str, Any]:
+            if sql and not await _confirm_destructive(
+                ctx, f"Create SQL layer on connection '{connection}'?\n\n{sql}"
+            ):
+                return {"ok": False, "message": "Cancelled by user"}
             result = await _send(
                 "add_layer_from_connection",
                 {

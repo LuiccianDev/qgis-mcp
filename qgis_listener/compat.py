@@ -31,6 +31,7 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsRaster,
     QgsRasterBandStats,
+    QgsRectangle,
     QgsSingleBandGrayRenderer,
     QgsUnitTypes,
     QgsVectorLayerExporter,
@@ -321,3 +322,11 @@ def make_field(name, type_key, type_name="", length=0, precision=0):
         return QgsField(name, meta_type, type_name, length or 0, precision or 0)
     except TypeError:
         return QgsField(name, _FIELD_QVAR_TYPES[type_key], type_name, length or 0, precision or 0)
+
+
+def band_statistics(provider, band):
+    """Compute all band statistics without triggering QGIS 3.40's int-overload DeprecationWarning."""
+    try:
+        return provider.bandStatistics(band)
+    except TypeError:
+        return provider.bandStatistics(band, RASTER_STATS_ALL, QgsRectangle(), 0)

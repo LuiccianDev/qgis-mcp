@@ -5,6 +5,8 @@ without importing each other.
 """
 
 import math
+import os
+import re
 
 from qgis.core import (
     QgsCoordinateReferenceSystem,
@@ -22,6 +24,32 @@ from ..errors import CommandError, LayerNotFound, WrongLayerType
 
 class HandlerBase:
     """Layer lookup and value conversion used by every other mixin."""
+
+    _URI_SECRET_RE = re.compile(
+        r"\b(sslpassword|password|pass|pwd)="
+        r"('(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|\S*)",
+        re.IGNORECASE,
+    )
+    _URI_USERINFO_RE = re.compile(r"(://[^/\s:@]*:)([^/\s?#]+)(@)")
+
+    @classmethod
+    def _redact_uri(cls, uri):
+        redacted = cls._URI_SECRET_RE.sub(r"\1=***", uri or "")
+        return cls._URI_USERINFO_RE.sub(r"\1***\3", redacted)
+
+    @staticmethod
+    def _check_safe_filename(value, label="name"):
+        """Reject path separators, drive prefixes, NUL bytes, and '.'/'..' segments."""
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or value in (".", "..")
+            or any(c in value for c in ("/", "\\", ":", "\x00"))
+            or os.path.isabs(value)
+        ):
+            raise CommandError(
+                f"{label} must be a single file name without path separators or '..'"
+            )
 
     @classmethod
     def _read_project(cls, path):

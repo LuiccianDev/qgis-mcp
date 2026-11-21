@@ -377,6 +377,7 @@ class LayoutHandlers:
             settings.dpi = dpi
             result, error = QgsLayoutExporter.exportToPdf(atlas, output_path, settings)
         elif fmt in ("png", "jpg", "jpeg", "tif", "tiff"):
+            self._check_safe_filename(layout_name, "Atlas layout_name")
             os.makedirs(output_path, exist_ok=True)
             settings = QgsLayoutExporter.ImageExportSettings()
             settings.dpi = dpi

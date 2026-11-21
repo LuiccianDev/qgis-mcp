@@ -50,6 +50,7 @@ from qgis_mcp.helpers import (
     ToolError,
     code_failure_message,
     enrich_diagnose,
+    get_auth_token,
     make_layer_response,
     make_project_response,
     make_render_response,
@@ -153,7 +154,10 @@ def parse_instances(spec: str, default_host: str = DEFAULT_HOST) -> dict[str, tu
             raise ValueError(f"QGIS_MCP_INSTANCES has a duplicate instance name: {name!r}")
         if ":" in target:
             host, _, port_raw = target.rpartition(":")
-            host = host.strip() or default_host
+            host = host.strip()
+            if host.startswith("[") and host.endswith("]"):
+                host = host[1:-1]
+            host = host or default_host
         else:
             host, port_raw = default_host, target
         port = _parse_port(port_raw.strip(), f"QGIS_MCP_INSTANCES port for {name!r}")
@@ -205,7 +209,7 @@ def resolve_instance(instance: str | None) -> str:
     instances = get_instances()
     if not instances:
         raise ValueError("No QGIS instances configured - check QGIS_MCP_INSTANCES")
-    name = instance or implicit_instance(instances)
+    name = implicit_instance(instances) if instance is None else instance
     if name not in instances:
         raise _unknown_instance_error(name, instances)
     return name
@@ -389,6 +393,27 @@ def _handle_send_error(
         raise exc
 
 
+def _http_unauth_allowed() -> bool:
+    return os.environ.get("QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _ensure_http_transport_safe() -> None:
+    if (
+        os.environ.get("QGIS_MCP_TRANSPORT", "stdio") == "streamable-http"
+        and get_auth_token()
+        and not _http_unauth_allowed()
+    ):
+        raise ToolError(
+            "Refusing to proxy streamable-http command while a shared QGIS_MCP_TOKEN / token "
+            "file is active without QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP=1."
+        )
+
+
 def _send_sync(
     command_type: str,
     params: dict | None = None,
@@ -413,6 +438,7 @@ def _send_sync(
 
     ``retries`` overrides that schedule. Pass 1 for calls that must stay quick.
     """
+    _ensure_http_transport_safe()
     name = resolve_instance(instance)
     last_exc: Exception | None = None
     max_retries, delays = _retry_schedule(retries)
@@ -931,6 +957,13 @@ def style_map_prompt(layer_id: str, field: str) -> list[UserMessage]:
 def main():
     transport = os.environ.get("QGIS_MCP_TRANSPORT", "stdio")
     if transport == "streamable-http":
+        if get_auth_token() and not _http_unauth_allowed():
+            raise SystemExit(
+                "Refusing to start unauthenticated streamable-http transport while a shared "
+                "QGIS_MCP_TOKEN / token file is active (the HTTP endpoint would proxy commands "
+                "with your token attached). Use stdio transport, put an authenticating reverse "
+                "proxy in front and set QGIS_MCP_ALLOW_UNAUTHENTICATED_HTTP=1, or revoke the token."
+            )
         mcp.run(transport="streamable-http")
     else:
         mcp.run()

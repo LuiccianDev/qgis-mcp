@@ -52,5 +52,7 @@ class PluginToolset(BaseToolset):
         async def reload_plugin(
             ctx: Context, plugin_name: str, instance: str | None = None
         ) -> dict:
+            if not await self._confirm_destructive(ctx, f"Reload plugin '{plugin_name}'?"):
+                return {"ok": False, "message": "Cancelled by user"}
             await ctx.info(f"Reloading plugin: {plugin_name}")
             return await _send("reload_plugin", {"plugin_name": plugin_name}, instance=instance)

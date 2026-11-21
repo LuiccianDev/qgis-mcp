@@ -338,3 +338,72 @@ def test_render_description_lists_all_layout_actions():
     desc = mcp._tool_manager.get_tool("render").description
     for action in ("add_grid", "update_item", "remove_item"):
         assert action in desc, f"render description missing action {action!r}"
+
+
+@pytest.mark.asyncio
+async def test_compound_render_and_query_annotations_and_destructive_confirmations():
+    send = AsyncMock(return_value={"ok": True})
+    confirm = AsyncMock(return_value=False)
+    mcp = FastMCP("compound-security-annotations-test")
+    register_compound_tools(mcp, _send=send, _confirm_destructive=confirm)
+    ctx = MagicMock(info=AsyncMock(), report_progress=AsyncMock())
+
+    render_tool = mcp._tool_manager.get_tool("render")
+    query_tool = mcp._tool_manager.get_tool("query")
+    assert render_tool.annotations.destructiveHint is True
+    assert query_tool.annotations.readOnlyHint is not True
+
+    for tool_name, action, params in (
+        ("render", "remove_item", {"layout_name": "L", "item_id": "I1"}),
+        ("plugins", "reload", {"plugin_name": "p"}),
+        ("project", "export_session", {"path": "/tmp/replay.py"}),
+        (
+            "connection",
+            "add_layer",
+            {"provider": "postgres", "connection": "gis", "sql": "SELECT 1"},
+        ),
+    ):
+        res = await mcp._tool_manager.get_tool(tool_name).fn(ctx=ctx, action=action, params=params)
+        assert res == {"ok": False, "message": "Cancelled by user"}, f"{tool_name}.{action}"
+    send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compound_tools_enforce_pydantic_bounds_and_reject_unknown_layout_item_params():
+    send = AsyncMock(return_value={"ok": True})
+    mcp = FastMCP("compound-pydantic-bounds-test")
+    register_compound_tools(mcp, _send=send, _confirm_destructive=AsyncMock(return_value=True))
+    ctx = MagicMock(info=AsyncMock(), report_progress=AsyncMock())
+
+    for tool_name, action, bad_params in (
+        ("render", "map", {"width": 100000, "height": 600}),
+        ("render", "map", {"width": 0, "height": 600}),
+        ("layer", "list", {"limit": 0, "offset": 0}),
+        ("layer", "list", {"limit": 50, "offset": -1}),
+        ("features", "get", {"layer_id": "L1", "limit": 0}),
+        ("features", "get", {"layer_id": "L1", "limit": "not-an-int"}),
+        ("features", "get", {"layer_id": "L1", "limit": None}),
+        ("features", "get", {"layer_id": "L1", "offset": -5}),
+        ("batch", "execute", {"commands": [{"type": ""}]}),
+        ("render", "add_label", {"layout_name": "L", "text": "hi", "bogus_key": 1}),
+        (
+            "connection",
+            "create",
+            {"name": "c", "connection_mode": "service_only", "service": "svc password=leak"},
+        ),
+    ):
+        with pytest.raises(ToolError):
+            await mcp._tool_manager.get_tool(tool_name).fn(
+                ctx=ctx, action=action, params=bad_params
+            )
+    send.assert_not_called()
+
+    await mcp._tool_manager.get_tool("batch").fn(
+        ctx=ctx, action="execute", params={"commands": [{"type": "ping"}]}
+    )
+    await mcp._tool_manager.get_tool("render").fn(
+        ctx=ctx,
+        action="add_grid",
+        params={"layout_name": "L", "name": "Grid 1", "show_annotations": True, "crs": "EPSG:4326"},
+    )
+    assert send.await_count == 2
