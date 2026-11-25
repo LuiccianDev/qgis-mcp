@@ -1,6 +1,6 @@
 <div align="center">
 
-# Luiccian QGIS MCP
+# QGIS MCP
 
 [![PyPI](https://img.shields.io/pypi/v/luiccian-qgis-mcp?color=blue)](https://pypi.org/project/luiccian-qgis-mcp/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
